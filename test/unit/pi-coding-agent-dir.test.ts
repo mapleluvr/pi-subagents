@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { discoverAgentsAll } from "../../src/agents/agents.ts";
 import { handleCreate } from "../../src/agents/agent-management.ts";
@@ -84,6 +86,30 @@ describe("PI_CODING_AGENT_DIR runtime paths", () => {
 		const config = loadConfig();
 		assert.equal(config.asyncByDefault, true);
 		assert.equal(config.maxSubagentDepth, 3);
+	});
+
+	it("shared utils load when the optional pi-coding-agent peer is unavailable", () => {
+		const loaderPath = path.join(tempDir, "block-pi-coding-agent-loader.mjs");
+		writeFile(loaderPath, `
+export function resolve(specifier, context, nextResolve) {
+  if (specifier === "@earendil-works/pi-coding-agent") {
+    throw new Error("blocked optional pi-coding-agent peer");
+  }
+  return nextResolve(specifier, context);
+}
+`);
+		const utilsUrl = pathToFileURL(path.resolve("src/shared/utils.ts")).href;
+		const result = spawnSync(process.execPath, [
+			"--experimental-strip-types",
+			"--loader",
+			pathToFileURL(loaderPath).href,
+			"--input-type=module",
+			"--eval",
+			`const mod = await import(${JSON.stringify(utilsUrl)}); process.stdout.write(mod.getConfigDirName());`,
+		], { cwd, encoding: "utf-8" });
+
+		assert.equal(result.status, 0, result.stderr || result.stdout);
+		assert.equal(result.stdout, ".pi");
 	});
 
 	it("discovers user agents, chains, and settings under the configured agent dir", () => {

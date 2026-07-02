@@ -265,6 +265,37 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		}
 	});
 
+	it("captures async runner startup stderr and stdout in the run directory", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "startup log async done" });
+		const id = `async-runner-startup-log-${Date.now().toString(36)}`;
+		const result = executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Say startup log async done. Do not edit files.",
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+		});
+
+		assert.equal(result.isError, undefined);
+		const asyncDir = result.details.asyncDir;
+		assert.equal(typeof asyncDir, "string");
+		const startupLog = path.join(asyncDir, "runner-startup.log");
+		assert.equal(fs.existsSync(startupLog), true, "runner startup log should exist immediately after spawn");
+		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, true);
+	});
+
 	it("readStatus returns null for missing directory", () => {
 		const status = readStatus("/nonexistent/path/abc123");
 		assert.equal(status, null);

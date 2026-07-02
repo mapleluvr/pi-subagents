@@ -237,13 +237,41 @@ function spawnRunner(cfg: object, suffix: string, cwd: string): { pid?: number; 
 	fs.writeFileSync(cfgPath, JSON.stringify(cfg));
 	const runner = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-runner.ts");
 	const nodeCommand = resolveAsyncRunnerNodeCommand();
+	const asyncDir = typeof (cfg as { asyncDir?: unknown }).asyncDir === "string"
+		? (cfg as { asyncDir: string }).asyncDir
+		: TEMP_ROOT_DIR;
+	const startupLogPath = path.join(asyncDir, "runner-startup.log");
+	let startupLogFd: number | undefined;
+	try {
+		fs.mkdirSync(path.dirname(startupLogPath), { recursive: true });
+		startupLogFd = fs.openSync(startupLogPath, "a");
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return { error: `failed to create async runner startup log '${startupLogPath}': ${message}` };
+	}
 
-	const proc = spawn(nodeCommand, [jitiCliPath, runner, cfgPath], {
-		cwd,
-		detached: true,
-		stdio: "ignore",
-		windowsHide: true,
-	});
+	let proc;
+	try {
+		proc = spawn(nodeCommand, [jitiCliPath, runner, cfgPath], {
+			cwd,
+			detached: true,
+			stdio: ["ignore", startupLogFd, startupLogFd],
+			windowsHide: true,
+		});
+	} catch (error) {
+		try {
+			fs.closeSync(startupLogFd);
+		} catch {
+			// Best-effort cleanup after spawn construction fails.
+		}
+		const message = error instanceof Error ? error.message : String(error);
+		return { error: `async runner spawn failed: ${message}` };
+	}
+	try {
+		fs.closeSync(startupLogFd);
+	} catch {
+		// Child has inherited the descriptor; parent-side close failure is non-fatal.
+	}
 	proc.on("error", (error) => {
 		console.error(`[pi-subagents] async spawn failed: ${error.message}`);
 	});
