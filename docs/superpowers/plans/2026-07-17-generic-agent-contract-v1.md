@@ -32,7 +32,7 @@
 - [x] Task 4: Promote structured output to every launch and delegation surface
 - [x] Task 5: Align agent-facing guidance and compatibility diagnostics
 - [x] Task 6: Verify runtime behavior with the requested Pi model
-- [ ] Task 7: Whole-change review, proposal, and upstream issue
+- [x] Task 7: Whole-change review, proposal, and upstream issue
 
 ### Task 1: Define and resolve the v1 contract
 
@@ -306,6 +306,8 @@ git commit -m "docs: describe generic agent contract v1"
 ### Task 7: Whole-change review, proposal, and upstream issue
 
 **Purpose:** Ship a reviewable implementation link and an upstream issue that accurately explains motivation, compatibility, tradeoffs, and evidence.
+
+**Delivered:** implementation commit `1af19b3b0e4b72dd7ed0f1e9d4d90637f59bf643`; upstream proposal [nicobailon/pi-subagents#499](https://github.com/nicobailon/pi-subagents/issues/499); final code review and issue-context Oracle both returned `APPROVE`.
 
 **Files/modules:**
 - Create: `docs/proposals/generic-agent-contract-v1-issue.md`
