@@ -59,7 +59,7 @@ interface ExecutorModule {
 
 interface AsyncResultPayload {
 	success: boolean;
-	results: Array<{ output?: string; error?: string; acceptance?: AcceptanceSummary; artifactPaths?: AcceptanceArtifactPaths }>;
+	results: Array<{ output?: string; exitCode?: number; error?: string; acceptance?: AcceptanceSummary; artifactPaths?: AcceptanceArtifactPaths }>;
 }
 
 const execution = await tryImport<ExecutionModule>("./src/runs/foreground/execution.ts");
@@ -154,6 +154,24 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 	}
 
 	describe("foreground runSync", () => {
+		it("keeps v1 execution success separate from verify-only acceptance rejection", async () => {
+			mockPi.onCall({ output: "ordinary successful child output" });
+
+			const result = await runSync!(tempDir, [makeAgent("worker", { completionGuard: false })], "worker", "Return the result.", {
+				runId: "acceptance-v1-verify-only-rejected",
+				agentContract: { version: 1, source: "call" },
+				acceptance: { verify: [{ id: "reject", command: `${JSON.stringify(process.execPath)} -e "process.exit(1)"` }] },
+			});
+
+			assert.equal(result.exitCode, 0);
+			assert.equal(result.error, undefined);
+			assert.equal(result.acceptance?.status, "rejected");
+			assert.equal(result.acceptance?.childReport, undefined);
+			assert.equal(result.acceptance?.verifyRuns?.[0]?.status, "failed");
+			assert.deepEqual(result.execution, { state: "completed", exitCode: 0 });
+			assert.deepEqual(result.review, { status: "not-requested" });
+		});
+
 		it("file-only mode accepts from the child-written file when the text report fails", async () => {
 			const outputPath = path.join(tempDir, "report.md");
 			conflictingReportsCall(outputPath, "satisfied", "not-satisfied");
@@ -333,6 +351,33 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 				acceptance: { level: "checked", criteria: ["Report the findings"] },
 			});
 		}
+
+		it("keeps v1 async execution successful when verify-only acceptance rejects", async () => {
+			mockPi.onCall({ output: "worker completed" });
+			const id = `acceptance-v1-orthogonal-${Date.now().toString(36)}`;
+			executeAsyncSingle!(id, {
+				agent: "worker",
+				task: "Return the findings.",
+				agentConfig: makeAgent("worker", { completionGuard: false }),
+				agentContract: { version: 1, source: "call" },
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-file-report" },
+				artifactConfig: DISABLED_ARTIFACTS,
+				artifactsDir: path.join(tempDir, ".pi-subagents", "artifacts"),
+				shareEnabled: false,
+				maxSubagentDepth: 2,
+				acceptance: { verify: [{ id: "reject", command: `${JSON.stringify(process.execPath)} -e "process.exit(1)"` }] },
+			});
+
+			const payload = await waitForAsyncResult(id);
+			assert.equal(payload.success, true);
+			assert.equal(payload.results[0]?.exitCode, 0);
+			assert.equal(payload.results[0]?.acceptance?.status, "rejected");
+			const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR!, id, "status.json"), "utf-8")) as { state?: string; steps?: Array<{ status?: string; exitCode?: number; acceptance?: { status?: string } }> };
+			assert.equal(status.state, "complete");
+			assert.equal(status.steps?.[0]?.status, "complete");
+			assert.equal(status.steps?.[0]?.exitCode, 0);
+			assert.equal(status.steps?.[0]?.acceptance?.status, "rejected");
+		});
 
 		it("file-only mode accepts from the child-written file when the text report fails", async () => {
 			const outputPath = path.join(tempDir, "async-report.md");

@@ -81,12 +81,14 @@ export interface SubagentDelegationRequest {
 	context: "fresh" | "fork";
 	cwd: string;
 	model?: string;
+	agentContract?: { version: 1 };
 	timeoutMs?: number;
 	turnBudget?: SubagentDelegationTurnBudget;
 	toolBudget?: SubagentDelegationToolBudget;
 	skill?: string | string[] | boolean;
 	output?: string | boolean;
 	outputMode?: "inline" | "file-only";
+	outputSchema?: Record<string, unknown>;
 	acceptance?: SubagentDelegationAcceptance;
 	artifacts?: boolean;
 }
@@ -146,6 +148,7 @@ export interface SubagentDelegationResponse extends SubagentDelegationStarted {
 	exitCode?: number;
 	output?: string;
 	outputPath?: string;
+	structuredOutput?: unknown;
 	sessionFile?: string;
 	acceptance?: SubagentDelegationAcceptanceResult;
 	turns?: number;

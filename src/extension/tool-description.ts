@@ -10,6 +10,7 @@ export const SUBAGENT_SAFETY_GUIDANCE = `SAFETY-CRITICAL SUBAGENT GUIDANCE:
 • Use { action: "list" } before execution and only run executable/non-disabled agents or chains.
 • Keep execution and management separate: omit action for SINGLE/PARALLEL/CHAIN execution; use action only for list/get/models/create/update/delete/status/interrupt/stop/resume/append-step/doctor.
 • Async/background runs: launch with async:true only when work can proceed independently. Do not sleep or poll status just to wait. In an interactive session, normally return control and let Pi wake you; use subagent_wait when this request must run to completion in the current turn or skill. Headless sessions auto-drain current-session work.
+• Run-timeout safety: omit timeoutMs/maxRuntimeMs and leave runs unlimited unless the user explicitly requires a hard deadline. One launch timeout is shared across the entire single, parallel, or chain run and terminates active child work when it expires; prefer turnBudget/toolBudget to bound effort.
 • Child-safety boundary: ordinary child subagents are not orchestrators and must not run subagents. Only explicitly configured fanout children may use the child-safe subagent tool, still bounded by depth/session limits.
 • Writing/review safety: keep one writer for the same cwd/worktree. Use fresh-context read-only reviewers/validators for independent review, then have the parent synthesize and apply fixes as the sole writer unless an isolated worktree was intentionally requested.
 • Artifacts/status essentials: chain outputs live under {chain_dir}; async runs expose asyncId/asyncDir with status.json, events.jsonl, output logs, and status via { action: "status", id }. Include output paths and residual risks when reporting results.`;
@@ -18,13 +19,20 @@ export const FULL_SUBAGENT_TOOL_DESCRIPTION = `Delegate to subagents or manage a
 
 EXECUTION (use exactly ONE mode):
 • Before executing, use { action: "list" } to inspect configured agents/chains. Only execute agents listed as executable/non-disabled.
-• SINGLE: { agent, task? } - one task; omit task for self-contained agents
+• SINGLE: { agent, task?, outputSchema? } - one task; omit task for self-contained agents
 • CHAIN: { chain: [{agent:"agent-a"}, {parallel:[{agent:"agent-b",count:3}]}] } - sequential pipeline with optional parallel fan-out
-• PARALLEL: { tasks: [{agent,task,count?,output?,reads?,progress?}, ...], concurrency?: number, worktree?: true } - concurrent execution (worktree: isolate each task in a git worktree)
+• PARALLEL: { tasks: [{agent,task,count?,output?,outputSchema?,reads?,progress?}, ...], concurrency?: number, worktree?: true } - concurrent execution (worktree: isolate each task in a git worktree)
 • Optional context: { context: "fresh" | "fork" } (explicit value overrides every child; when omitted, each requested agent uses its own defaultContext, otherwise "fresh"; inspect agent defaults via { action: "list" })
 • Fork thinking: model strings accept a thinking suffix (provider/model:off|minimal|low|medium|high|xhigh|max). Forking over a parent transcript that carries signed Anthropic thinking blocks forces thinking off only when a child's effective primary or fallback model resolves to the Anthropic provider or anthropic-messages API; unresolved models are treated conservatively. The result notes affected children, including on failures. Use fresh context when an Anthropic child needs thinking.
-• Optional timeout: { timeoutMs } or { maxRuntimeMs } sets a run-level max runtime for foreground and async/background runs
+• Run-timeout policy: omit timeoutMs/maxRuntimeMs by default. Pass either alias only when the user explicitly requires a hard deadline; it is one run-level deadline shared by foreground and async/background runs.
 • If { action: "list" } shows proactive skill subagent suggestions, consider a small fresh-context fanout for broad tasks where one of those skills would materially help
+
+GENERIC AGENT CONTRACT V1 (explicit opt-in):
+• { agentContract: { version: 1 } } disables legacy task/name/async acceptance inference. Acceptance runs only when supplied, and rejected acceptance remains policy metadata without changing execution exitCode/status. Results/status expose derived execution and review projections.
+• outputSchema is structural child-output protocol and works on direct single, top-level tasks[], and chain steps; it does not imply acceptance or review.
+• Chain steps may set gateOn: "execution" or "acceptance". V1 defaults to execution, so acceptance gates transitions only when explicitly selected.
+• CompletionGuard is observational in v1 and runs only for agents configured with completionGuard:true; its file-mutation result appears under effects and does not rewrite execution success.
+• Omit agentContract to retain legacy inference, CompletionGuard, and failure semantics.
 
 CHAIN TEMPLATE VARIABLES (use in task strings):
 • {task} - The original task/request from the user
@@ -77,8 +85,9 @@ export const COMPACT_SUBAGENT_TOOL_DESCRIPTION = `Delegate to subagents or manag
 
 EXECUTE:
 • Before execution, call { action: "list" }; run only executable/non-disabled configured agents/chains.
-• SINGLE {agent, task?}; PARALLEL {tasks:[{agent,task,count?,output?,reads?,progress?}], concurrency?, worktree?}; CHAIN {chain:[{agent,task?},{parallel:[...]}]}.
-• context can be "fresh" or "fork"; omitted uses each agent defaultContext, otherwise fresh. timeoutMs/maxRuntimeMs apply to foreground and async/background runs.
+• SINGLE {agent, task?, outputSchema?}; PARALLEL {tasks:[{agent,task,count?,output?,outputSchema?,reads?,progress?}], concurrency?, worktree?}; CHAIN {chain:[{agent,task?},{parallel:[...]}]}.
+• context can be "fresh" or "fork"; omitted uses each agent defaultContext, otherwise fresh. Set a hard deadline with timeoutMs/maxRuntimeMs only when the user explicitly requires one; it applies to the entire foreground or async/background run.
+• agentContract:{version:1} opts into explicit, observational policy: no inferred acceptance; rejected acceptance does not change execution success. Results/status include derived execution and review projections. outputSchema works on direct single and tasks[] as structural output only. Chain gateOn:"acceptance" is explicit; the v1 default is execution. CompletionGuard is observational and only runs for agents configured with completionGuard:true.
 • Chain templates may use {task}, {previous}, {chain_dir}, and named outputs. Parallel worktree isolation requires a clean git repo.
 • Chain example: { chain: [{agent:"agent-a", task:"Analyze {task}"}, {parallel: [{agent:"agent-b", task:"Check {previous}", count: 3}]}] }
 • If list shows proactive skill subagent suggestions, use a small fresh-context fanout only when the task is broad enough.

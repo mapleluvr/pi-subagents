@@ -38,10 +38,15 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /executable\/non-disabled/i);
 		assert.match(description, /proactive skill subagent suggestions/i);
 		assert.doesNotMatch(description, /disabled builtins/i);
-		assert.match(description, /output\?,reads\?,progress\?/i);
+		assert.match(description, /output\?,outputSchema\?,reads\?,progress\?/i);
 		assert.match(description, /timeoutMs/i);
 		assert.match(description, /maxRuntimeMs/i);
 		assert.match(description, /foreground and async\/background runs/i);
+		assert.match(description, /user explicitly requires a hard deadline/i);
+		assert.match(description, /agentContract.*version.*1/i);
+		assert.match(description, /outputSchema.*direct single.*tasks/i);
+		assert.match(description, /gateOn.*execution.*acceptance/i);
+		assert.match(description, /CompletionGuard.*observational/i);
 		assert.doesNotMatch(description, /only for foreground runs/i);
 		assert.doesNotMatch(description, /omit for async\/background runs/i);
 		assert.match(description, /SAFETY-CRITICAL SUBAGENT GUIDANCE/);
@@ -98,6 +103,10 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /Explicit task intent wins/i);
 		assert.match(description, /omission keeps name heuristics/i);
 		assert.match(description, /false or an empty string to clear it/i);
+		assert.match(description, /hard deadline.*explicitly requires/i);
+		assert.match(description, /agentContract.*version.*1/i);
+		assert.match(description, /outputSchema.*direct single.*tasks/i);
+		assert.match(description, /gateOn.*acceptance/i);
 		assert.match(description, /status\.json/);
 		assert.match(description, /events\.jsonl/);
 		// Compact mode keeps a chain quick-reference too (#417)

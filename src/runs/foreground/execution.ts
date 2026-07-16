@@ -29,6 +29,7 @@ import {
 	type ResolvedAcceptanceConfig,
 	truncateOutput,
 	getSubagentDepthEnv,
+	applySingleResultProjections,
 } from "../../shared/types.ts";
 import {
 	DEFAULT_CONTROL_CONFIG,
@@ -1075,7 +1076,9 @@ async function runSingleAttempt(
 		const note = turnBudgetSoftNote(result.turnBudget, result.turnBudget.wrapUpRequestedAtTurn ?? result.turnBudget.turnCount);
 		fullOutput = fullOutput.trim() ? `${note}\n\n${fullOutput}` : note;
 	}
-	const completionGuard = result.exitCode === 0 && !result.error && agent.completionGuard !== false
+	const v1Contract = options.agentContract?.version === 1;
+	const completionGuardEnabled = v1Contract ? agent.completionGuard === true : agent.completionGuard !== false;
+	const completionGuard = result.exitCode === 0 && !result.error && completionGuardEnabled
 		? evaluateCompletionMutationGuard({
 			agent: agent.name,
 			task: shared.originalTask ?? task,
@@ -1084,7 +1087,18 @@ async function runSingleAttempt(
 			mcpDirectTools: agent.mcpDirectTools,
 		})
 		: undefined;
-	if (completionGuard?.triggered && !observedMutationAttempt) {
+	const completionGuardRejected = completionGuard?.triggered === true && !observedMutationAttempt;
+	if (v1Contract) {
+		result.effects = {
+			fileMutation: !completionGuardEnabled || !completionGuard?.expectedMutation
+				? { status: "not-requested", source: "agent-completion-guard" }
+				: completionGuardRejected
+					? { status: "rejected", source: "agent-completion-guard", message: "Subagent completed without making edits for an implementation task." }
+					: { status: "satisfied", source: "agent-completion-guard" },
+		};
+	}
+	if (completionGuardRejected && !v1Contract) {
+		result.completionGuardTriggered = true;
 		result.exitCode = 1;
 		result.error = "Subagent completed without making edits for an implementation task.\nIt appears to have returned planning or scratchpad output instead of applying changes.";
 		progress.status = "failed";
@@ -1177,8 +1191,9 @@ export async function runSync(
 		async: options.acceptanceContext?.async,
 		dynamic: options.acceptanceContext?.dynamic,
 		dynamicGroup: options.acceptanceContext?.dynamicGroup,
+		agentContract: options.agentContract,
 	});
-	const acceptancePrompt = formatAcceptancePrompt(effectiveAcceptance);
+	const acceptancePrompt = effectiveAcceptance ? formatAcceptancePrompt(effectiveAcceptance) : "";
 	const taskWithAcceptance = acceptancePrompt ? `${task}\n${acceptancePrompt}` : task;
 	const sessionEnabled = Boolean(options.sessionFile || options.sessionDir) || shareEnabled;
 	const skillNames = options.skills ?? agent.skills ?? [];
@@ -1278,20 +1293,25 @@ export async function runSync(
 			...options,
 			onDetachedExit: (recoveredResult) => {
 				void (async () => {
+					recoveredResult.agentContract = options.agentContract;
 					const childWrittenOutput = options.outputPath
 						? extractChildWrittenOutput(recoveredResult.messages, options.outputPath, options.cwd ?? runtimeCwd)
 						: undefined;
-					recoveredResult.acceptance = await evaluateAcceptance({
-						acceptance: effectiveAcceptance,
-						output: acceptanceOutputByResult.get(recoveredResult) ?? recoveredResult.finalOutput ?? "",
-						fileOutput: childWrittenOutput !== undefined && options.outputPath
-							? { content: childWrittenOutput, path: options.outputPath, authoritative: options.outputMode === "file-only" }
-							: undefined,
-						cwd: options.cwd ?? runtimeCwd,
-					});
-					const acceptanceFailure = acceptanceFailureMessage(recoveredResult.acceptance);
+					recoveredResult.acceptance = effectiveAcceptance
+						? await evaluateAcceptance({
+							acceptance: effectiveAcceptance,
+							output: acceptanceOutputByResult.get(recoveredResult) ?? recoveredResult.finalOutput ?? "",
+							fileOutput: childWrittenOutput !== undefined && options.outputPath
+								? { content: childWrittenOutput, path: options.outputPath, authoritative: options.outputMode === "file-only" }
+								: undefined,
+							cwd: options.cwd ?? runtimeCwd,
+						})
+						: undefined;
+					const acceptanceFailure = recoveredResult.acceptance
+						? acceptanceFailureMessage(recoveredResult.acceptance)
+						: undefined;
 					stripAcceptanceReportsFromMessages(recoveredResult.messages);
-					if (acceptanceFailure && recoveredResult.acceptance.explicit && recoveredResult.exitCode === 0) {
+					if (acceptanceFailure && recoveredResult.acceptance.explicit && options.agentContract?.version !== 1 && recoveredResult.exitCode === 0) {
 						recoveredResult.exitCode = 1;
 						recoveredResult.error = recoveredResult.error ? `${recoveredResult.error}\n${acceptanceFailure}` : acceptanceFailure;
 						if (recoveredResult.progress) {
@@ -1299,12 +1319,14 @@ export async function runSync(
 							recoveredResult.progress.error = recoveredResult.error;
 						}
 					}
+					applySingleResultProjections(recoveredResult);
 					persistResultMetadata(recoveredResult);
 					options.onDetachedExit?.(recoveredResult);
 				})().catch((error) => {
 					const message = error instanceof Error ? error.message : String(error);
 					recoveredResult.exitCode = 1;
 					recoveredResult.error = recoveredResult.error ? `${recoveredResult.error}\nAcceptance evaluation failed: ${message}` : `Acceptance evaluation failed: ${message}`;
+					applySingleResultProjections(recoveredResult);
 					options.onDetachedExit?.(recoveredResult);
 				});
 			},
@@ -1405,10 +1427,13 @@ export async function runSync(
 		if (sessionFile) result.sessionFile = sessionFile;
 	}
 
+	result.agentContract = options.agentContract;
 	const childWrittenOutput = options.outputPath
 		? extractChildWrittenOutput(result.messages, options.outputPath, options.cwd ?? runtimeCwd)
 		: undefined;
-	if (result.detached) {
+	if (!effectiveAcceptance) {
+		result.acceptance = undefined;
+	} else if (result.detached) {
 		result.acceptance = buildPendingAcceptanceLedger(effectiveAcceptance);
 	} else if (result.stopped) {
 		result.acceptance = buildSkippedAcceptanceLedger(effectiveAcceptance, { id: "stopped", message: "Acceptance was not evaluated because the subagent was stopped." });
@@ -1426,9 +1451,9 @@ export async function runSync(
 			cwd: options.cwd ?? runtimeCwd,
 		});
 	}
-	const acceptanceFailure = acceptanceFailureMessage(result.acceptance);
+	const acceptanceFailure = result.acceptance ? acceptanceFailureMessage(result.acceptance) : undefined;
 	stripAcceptanceReportsFromMessages(result.messages);
-	if (acceptanceFailure && result.acceptance.explicit && result.exitCode === 0 && !result.detached && !result.interrupted && !result.timedOut) {
+	if (acceptanceFailure && result.acceptance?.explicit && options.agentContract?.version !== 1 && result.exitCode === 0 && !result.detached && !result.interrupted && !result.timedOut) {
 		result.exitCode = 1;
 		result.error = result.error ? `${result.error}\n${acceptanceFailure}` : acceptanceFailure;
 		if (result.progress) {
@@ -1436,6 +1461,7 @@ export async function runSync(
 			result.progress.error = result.error;
 		}
 	}
+	applySingleResultProjections(result);
 	persistResultMetadata(result);
 
 	return result;

@@ -64,12 +64,14 @@ const request: SubagentDelegationRequest = {
 	context: "fresh",
 	cwd: "/repo",
 	model: "openai/gpt-5",
+	agentContract: { version: 1 },
 	timeoutMs: 1_000,
 	turnBudget: { maxTurns: 4, graceTurns: 1 },
 	toolBudget: { soft: 3, hard: 5, block: "*" },
 	skill: ["review"],
 	output: "result.md",
 	outputMode: "file-only",
+	outputSchema: { type: "object", properties: { verdict: { type: "string" } }, required: ["verdict"] },
 	acceptance: "checked",
 	artifacts: true,
 };
@@ -95,6 +97,7 @@ describe("public subagent delegation contract", () => {
 			[{ ...request, version: 2 }, /Unsupported delegation protocol version/],
 			[{ ...request, tools: ["write"] }, /Unsupported delegation field: tools/],
 			[{ ...request, maxRuntimeMs: 1_000 }, /Unsupported delegation field: maxRuntimeMs/],
+			[{ ...request, agentContract: { version: 2 } }, /agentContract must be \{ version: 1 \}/],
 			[{ ...request, timeoutMs: 0 }, /timeoutMs must be an integer >= 1/],
 			[{ ...request, turnBudget: { maxTurns: 0 } }, /turnBudget.maxTurns/],
 			[{ ...request, turnBudget: { maxTurns: 1, extra: true } }, /turnBudget.extra is not supported/],
@@ -103,6 +106,7 @@ describe("public subagent delegation contract", () => {
 			[{ ...request, skill: [] }, /skill must/],
 			[{ ...request, output: "" }, /output must/],
 			[{ ...request, output: false, outputMode: "file-only" }, /outputMode.*output.*path/],
+			[{ ...request, outputSchema: [] }, /outputSchema must be a JSON Schema object/],
 			[{ ...request, acceptance: "none" }, /level "none" requires a reason/],
 			[{ ...request, acceptance: { level: "none" } }, /reason is required/],
 			[{ ...request, artifacts: "yes" }, /artifacts must be a boolean/],
@@ -141,6 +145,7 @@ describe("public subagent delegation contract", () => {
 							model: "openai/gpt-5",
 							finalOutput: "done",
 							savedOutputPath: "/repo/result.md",
+							structuredOutput: { verdict: "pass" },
 							sessionFile: "/tmp/session.jsonl",
 							usage: { input: 2, output: 3, cacheRead: 0, cacheWrite: 0, cost: 0.01, turns: 2 },
 							progressSummary: { toolCount: 4, tokens: 5, durationMs: 6 },
@@ -177,12 +182,14 @@ describe("public subagent delegation contract", () => {
 			context: "fresh",
 			cwd: "/repo",
 			model: "openai/gpt-5",
+			agentContract: { version: 1 },
 			timeoutMs: 1_000,
 			turnBudget: { maxTurns: 4, graceTurns: 1 },
 			toolBudget: { soft: 3, hard: 5, block: "*" },
 			skill: ["review"],
 			output: "result.md",
 			outputMode: "file-only",
+			outputSchema: { type: "object", properties: { verdict: { type: "string" } }, required: ["verdict"] },
 			acceptance: "checked",
 			artifacts: true,
 			async: false,
@@ -194,6 +201,7 @@ describe("public subagent delegation contract", () => {
 		assert.equal(response.agent, "reviewer");
 		assert.equal(response.output, "done");
 		assert.equal(response.outputPath, "/repo/result.md");
+		assert.deepEqual(response.structuredOutput, { verdict: "pass" });
 		assert.equal(response.sessionFile, "/tmp/session.jsonl");
 		assert.equal(response.turns, 2);
 		assert.equal(response.toolCount, 4);
@@ -239,6 +247,7 @@ describe("public subagent delegation contract", () => {
 			[{ turnBudgetExceeded: true }, "turn_budget_exhausted"],
 			[{ toolBudgetBlocked: true }, "tool_budget_exhausted"],
 			[{ acceptance: { status: "rejected", explicit: true } }, "acceptance_failed"],
+			[{ agentContract: { version: 1 }, exitCode: 0, acceptance: { status: "rejected", explicit: true } }, "completed"],
 			[{ acceptance: { status: "rejected", explicit: false } }, "completed"],
 			[{ exitCode: 1, error: "failed" }, "failed"],
 		] as const;

@@ -17,6 +17,7 @@ import type {
 	AcceptanceVerifyResult,
 	ResolvedAcceptanceConfig,
 	ResolvedAcceptanceGate,
+	ResolvedAgentContract,
 	SingleResult,
 	SubagentRunMode,
 } from "../../shared/types.ts";
@@ -324,8 +325,39 @@ export function resolveEffectiveAcceptance(input: {
 	async?: boolean;
 	dynamic?: boolean;
 	dynamicGroup?: boolean;
-}): ResolvedAcceptanceConfig {
+	agentContract?: ResolvedAgentContract;
+}): ResolvedAcceptanceConfig | undefined {
+	if (input.agentContract?.version === 1 && input.explicit === undefined) return undefined;
 	const explicit = normalizeAcceptanceInput(input.explicit);
+	if (input.agentContract?.version === 1) {
+		const explicitLevel = normalizeLevel(explicit.level);
+		const evidence = unique(explicit.evidence ?? []);
+		const criteria = normalizeCriteria(
+			explicit.criteria as Array<string | { id?: string; must?: string; evidence?: AcceptanceEvidenceKind[]; severity?: "required" | "recommended" }> | undefined,
+			evidence,
+		);
+		const level = explicitAcceptanceCanDisable(explicit)
+			? "none"
+			: explicitLevel !== "auto"
+				? explicitLevel
+				: explicit.verify?.length
+					? "verified"
+					: "attested";
+		const requiresChildReport = level !== "none" && (criteria.length > 0 || evidence.length > 0 || !explicit.verify?.length);
+		return {
+			level,
+			explicit: true,
+			contractVersion: 1,
+			requiresChildReport,
+			inferredReason: [],
+			criteria,
+			evidence,
+			verify: explicit.verify ?? [],
+			review: explicit.review,
+			stopRules: explicit.stopRules ?? [],
+			reason: explicit.reason,
+		};
+	}
 	const inferred = inferLevel(input);
 	const explicitLevel = normalizeLevel(explicit.level);
 	const level = explicitAcceptanceCanDisable(explicit)
@@ -356,7 +388,28 @@ export function resolveEffectiveAcceptance(input: {
 }
 
 export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig): string {
-	if (acceptance.level === "none") return "";
+	if (acceptance.level === "none" || acceptance.requiresChildReport === false) return "";
+	if (acceptance.contractVersion === 1) {
+		const lines = [
+			"",
+			"## Acceptance Contract",
+			"The parent explicitly requested a structured acceptance report for this run.",
+			"",
+			"Criteria:",
+			...(acceptance.criteria.length ? acceptance.criteria.map((criterion) => `- ${criterion.id}: ${criterion.must}`) : ["- Return an honest acceptance assessment."]),
+			"",
+			"Finish with a fenced JSON block tagged `acceptance-report`:",
+			"```acceptance-report",
+			JSON.stringify({
+				criteriaSatisfied: acceptance.criteria
+					.filter((criterion) => criterion.severity !== "recommended")
+					.map((criterion) => ({ id: criterion.id, status: "satisfied", evidence: "specific proof" })),
+				notes: "optional context for the parent",
+			}, null, 2),
+			"```",
+		];
+		return lines.join("\n");
+	}
 	const lines = [
 		"",
 		"## Acceptance Contract",
@@ -1042,37 +1095,48 @@ export async function evaluateAcceptance(input: {
 	};
 	if (acceptance.level === "none") return ledger;
 
-	const parsed = input.report
-		? (() => {
-			const validation = validateAcceptanceReport(input.report);
-			return validation.report
-				? { report: validation.report }
-				: { error: `Failed to parse acceptance-report: Invalid acceptance-report: ${validation.errors.join("; ")}` };
-		})()
-		: parseAcceptanceReportSources(input.output, input.fileOutput);
-	if (parsed.report) {
-		ledger.childReport = parsed.report;
-		ledger.status = "attested";
-	} else {
-		ledger.childReportParseError = parsed.error;
-		ledger.runtimeChecks.push({ id: "attestation", status: "failed", message: parsed.error ?? "Structured acceptance report missing." });
-		ledger.status = "rejected";
-		return ledger;
+	let childReport: AcceptanceReport | undefined;
+	let policyRejected = false;
+	if (acceptance.requiresChildReport !== false) {
+		const parsed = input.report
+			? (() => {
+				const validation = validateAcceptanceReport(input.report);
+				return validation.report
+					? { report: validation.report }
+					: { error: `Failed to parse acceptance-report: Invalid acceptance-report: ${validation.errors.join("; ")}` };
+			})()
+			: parseAcceptanceReportSources(input.output, input.fileOutput);
+		if (parsed.report) {
+			childReport = parsed.report;
+			ledger.childReport = parsed.report;
+			ledger.status = "attested";
+		} else {
+			ledger.childReportParseError = parsed.error;
+			ledger.runtimeChecks.push({ id: "attestation", status: "failed", message: parsed.error ?? "Structured acceptance report missing." });
+			ledger.status = "rejected";
+			policyRejected = true;
+			if (acceptance.contractVersion !== 1) return ledger;
+		}
 	}
 
-	if (LEVEL_RANK[acceptance.level] >= LEVEL_RANK.checked) {
+	if (childReport && (LEVEL_RANK[acceptance.level] >= LEVEL_RANK.checked || (acceptance.contractVersion === 1 && (acceptance.criteria.length > 0 || acceptance.evidence.length > 0)))) {
 		ledger.runtimeChecks = [
-			...checkCriteriaSatisfied(acceptance.criteria, parsed.report),
-			...runStructuralChecks(acceptance, parsed.report, input.cwd),
+			...checkCriteriaSatisfied(acceptance.criteria, childReport),
+			...runStructuralChecks(acceptance, childReport, input.cwd),
 		];
 		if (ledger.runtimeChecks.some((check) => check.status === "failed")) {
 			ledger.status = "rejected";
-			return ledger;
+			policyRejected = true;
+			if (acceptance.contractVersion !== 1) return ledger;
 		}
 		ledger.status = "checked";
 	}
 
-	if (LEVEL_RANK[acceptance.level] >= LEVEL_RANK.verified && (acceptance.level === "verified" || acceptance.verify.length > 0)) {
+	const shouldRunVerification = acceptance.contractVersion === 1
+		? acceptance.verify.length > 0 || acceptance.level === "verified"
+		: LEVEL_RANK[acceptance.level] >= LEVEL_RANK.verified
+			&& (acceptance.level === "verified" || acceptance.verify.length > 0);
+	if (shouldRunVerification) {
 		if (acceptance.level === "verified" && acceptance.verify.length === 0) {
 			ledger.runtimeChecks.push({ id: "verification-config", status: "failed", message: "verified acceptance requires runtime verify commands." });
 			ledger.status = "rejected";
@@ -1087,7 +1151,7 @@ export async function evaluateAcceptance(input: {
 			ledger.status = "rejected";
 			return ledger;
 		}
-		ledger.status = "verified";
+		ledger.status = policyRejected ? "rejected" : "verified";
 	}
 
 	if (acceptance.level === "reviewed") {
@@ -1108,6 +1172,7 @@ export async function evaluateAcceptance(input: {
 		}
 	}
 
+	if (policyRejected) ledger.status = "rejected";
 	return ledger;
 }
 

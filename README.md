@@ -747,7 +747,7 @@ Important fields:
 | `turnBudget` | JSON object default such as `{"maxTurns":20,"graceTurns":2}` for single-agent launches. An explicit call value wins, followed by this agent default, then global `turnBudget` config. |
 | `acceptance` | Acceptance default for single-agent launches. Use a scalar level such as `checked` or an inline/block YAML map such as `{ level: "none", reason: "lightweight lookup" }`. Explicit call values win; chain and parallel acceptance remains task/step configuration. |
 | `acceptanceRole` | Optional `read-only` or `writer` role for automatic acceptance inference. Explicit task mutation or no-edit intent wins; otherwise the declared role replaces agent-name guessing. This does not grant or revoke tools. |
-| `completionGuard` | Set `false` only for non-implementation agents that may mention implementation words while using mutation-capable tools such as `bash`. |
+| `completionGuard` | In generic contract v1, set `true` to request observational file-mutation effects. In legacy mode it remains enabled by default; set `false` for non-implementation agents that may mention implementation words while using mutation-capable tools such as `bash`. |
 | `interactive` | Parsed for compatibility but not enforced in v1. |
 | `maxSubagentDepth` | Tightens nested delegation for this agent's children. |
 | `memory` | Opt-in role-specific persistent memory. `memory: { scope: "project" \| "user", path: "<name>" }` injects the first lines of a `MEMORY.md` from a dedicated `agent-memory/` directory into the child system prompt. Agents with write tools (`edit`/`write`/`bash`) get a read-write block; read-only agents get a read-only fallback. Project scope resolves under `<project>/.pi/agent-memory/`, user scope under `~/.pi/agent/agent-memory/`. Paths are validated against traversal and symlink escape. |
@@ -770,7 +770,7 @@ Project-scoped memory resolves under `<project>/.pi/agent-memory/<path>` and tra
 
 ### Tool and extension selection
 
-If `tools` is omitted, `pi-subagents` does not pass `--tools`, so the child gets Pi’s normal builtin tools. If `tools` is present, regular tool names become an explicit allowlist. An allowlisted name does not load the extension that registers it: load that provider through normal Pi extension discovery, `extensions`, `subagentOnlyExtensions`, or a path-like `tools` entry. `mcp:` entries are split out and forwarded as direct MCP selections. Path-like `tools` entries, such as extension paths or `.ts`/`.js` files, are treated as tool-extension paths rather than tool names. Internal runtime tools such as `structured_output` are added to an explicit allowlist only when their contract is active. Agents that declare only known read-only builtin tools skip the implementation completion guard, but `bash`, unknown tools, and MCP tools stay mutation-capable. Use `completionGuard: false` for bash-enabled validators or advisors that should never be judged as implementation agents.
+If `tools` is omitted, `pi-subagents` does not pass `--tools`, so the child gets Pi’s normal builtin tools. If `tools` is present, regular tool names become an explicit allowlist. An allowlisted name does not load the extension that registers it: load that provider through normal Pi extension discovery, `extensions`, `subagentOnlyExtensions`, or a path-like `tools` entry. `mcp:` entries are split out and forwarded as direct MCP selections. Path-like `tools` entries, such as extension paths or `.ts`/`.js` files, are treated as tool-extension paths rather than tool names. Internal runtime tools such as `structured_output` are added to an explicit allowlist only when their contract is active. In generic contract v1, CompletionGuard runs only for agents configured with `completionGuard: true` and records an observational effect. In legacy mode, agents that declare only known read-only builtin tools skip the implementation guard, but `bash`, unknown tools, and MCP tools stay mutation-capable; use `completionGuard: false` for bash-enabled validators or advisors that should never be judged as implementation agents.
 
 Examples:
 
@@ -985,7 +985,12 @@ const request: SubagentDelegationRequest = {
   task: "Review the supplied evidence.",
   context: "fresh",
   cwd: ctx.cwd,
-  timeoutMs: 120_000,
+  agentContract: { version: 1 },
+  outputSchema: {
+    type: "object",
+    properties: { verdict: { type: "string" } },
+    required: ["verdict"],
+  },
   toolBudget: { soft: 10, hard: 16, block: "*" },
 };
 
@@ -998,9 +1003,9 @@ const unsubscribe = pi.events.on(SUBAGENT_DELEGATION_RESPONSE_EVENT, (payload) =
 pi.events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, request);
 ```
 
-The contract uses the established `prompt-template:subagent:*` event transport and the same executor as the `subagent` tool; it does not add another launcher. New integrations must send `version: 1`. Requests are strict and single-agent only. They can set fresh or fork context, model, cwd, timeout, turn and tool-call budgets, skills, output behavior, acceptance, and artifact capture. Unknown or malformed fields return `invalid_request` before execution.
+The contract uses the established `prompt-template:subagent:*` event transport and the same executor as the `subagent` tool; it does not add another launcher. New integrations must send transport `version: 1`. Requests are strict and single-agent only. They can set fresh or fork context, model, cwd, generic `agentContract`, an optional hard timeout, turn and tool-call budgets, skills, output behavior, `outputSchema`, acceptance, and artifact capture. Unknown or malformed fields return `invalid_request` before execution.
 
-Responses distinguish completion, failure, timeout, cancellation, interruption, turn or tool-budget exhaustion, explicit acceptance failure, invalid requests, and unavailable active context. Optional run, model, output, session, acceptance, usage, progress, and warning fields are omitted when unavailable. Request IDs must be unique while active; duplicate active IDs are ignored so the original request keeps ownership of its terminal response. Emit `SUBAGENT_DELEGATION_CANCEL_EVENT` with the same version and request ID to cancel queued or active work.
+Responses distinguish completion, failure, timeout, cancellation, interruption, turn or tool-budget exhaustion, legacy explicit acceptance failure, invalid requests, and unavailable active context. Under generic agent contract v1, rejected acceptance remains metadata on a completed execution response. Validated `structuredOutput` and optional run, model, output, session, acceptance, usage, progress, and warning fields are omitted when unavailable. Request IDs must be unique while active; duplicate active IDs are ignored so the original request keeps ownership of its terminal response. Emit `SUBAGENT_DELEGATION_CANCEL_EVENT` with the same version and request ID to cancel queued or active work.
 
 Delegation requires an active extension context. Emit requests from a supported event callback or queued application step, not by recursively invoking the `subagent` tool inside another tool's `tool_call` hook. The caller selects a configured agent, but agent discovery and effective tools remain package-owned. A request cannot grant arbitrary tools, and tool restrictions are not an operating-system sandbox. The detached RPC remains async-only; this API is foreground-only.
 
@@ -1187,12 +1192,13 @@ Agent definitions are not loaded into context by default. Management actions let
 | `config` | object/string | - | Agent or chain config for create/update. |
 | `output` | `string \| false` | agent default | Override single-agent output file. |
 | `outputMode` | `"inline" \| "file-only"` | `inline` | Return saved output inline or as a concise saved-file reference. `file-only` requires an `output` path. |
+| `outputSchema` | object | none | Object-root JSON Schema for child-owned structured output on direct single runs, top-level tasks, and chain steps. It does not imply acceptance or review. |
 | `skill` | `string \| string[] \| false` | agent default | Override skills or disable all. |
 | `model` | string | agent default | Override model. |
-| `tasks` | array | - | Top-level parallel tasks. Supports `agent`, `task`, `cwd`, `count`, `output`, `outputMode`, `reads`, `progress`, `skill`, `model`, `toolBudget`, and `acceptance`. |
+| `tasks` | array | - | Top-level parallel tasks. Supports `agent`, `task`, `cwd`, `count`, `output`, `outputMode`, `outputSchema`, `reads`, `progress`, `skill`, `model`, `toolBudget`, and `acceptance`. |
 | `concurrency` | number | config or `4` | Top-level parallel concurrency. |
 | `worktree` | boolean | false | Create isolated git worktrees for parallel tasks. |
-| `chain` | array | - | Sequential, static parallel, and dynamic fanout chain steps. Steps and chain parallel tasks support `phase`, `label`, `as`, `outputSchema`, and `acceptance` in addition to the usual execution fields. Dynamic fanout uses `expand`, one child `parallel` template, and `collect`. With `action: "append-step"`, pass exactly one step to append to a running async chain. |
+| `chain` | array | - | Sequential, static parallel, and dynamic fanout chain steps. Steps and chain parallel tasks support `phase`, `label`, `as`, `outputSchema`, `acceptance`, and `gateOn` in addition to the usual execution fields. Dynamic fanout uses `expand`, one child `parallel` template, and `collect`. With `action: "append-step"`, pass exactly one step to append to a running async chain. |
 | `context` | `fresh \| fork` | per-agent default or `fresh` | Explicit `fresh` or `fork` overrides every child. When omitted, each agent uses its own `defaultContext`; `fork` creates real branched sessions from the parent leaf. Packaged `planner`, `worker`, and `oracle` default to `fork`. |
 | `chainDir` | string | temp chain dir | Persistent directory for chain artifacts. |
 | `view` | `fleet \| transcript` | - | Optional `status` view for the active fleet surface or transcript tail inspection. |
@@ -1200,7 +1206,7 @@ Agent definitions are not loaded into context by default. Management actions let
 | `clarify` | boolean | false | Show TUI preview/edit flow. Explicit `clarify: true` keeps the run foreground for the clarify UI. |
 | `agentScope` | `user \| project \| both` | `both` | Agent discovery scope. Project wins on collisions. |
 | `async` | boolean | false | Background execution. For chains, `clarify: true` explicitly keeps the run foreground for the clarify UI. |
-| `timeoutMs` / `maxRuntimeMs` | number | none | Optional run-level max runtime in milliseconds for foreground and async/background runs. |
+| `timeoutMs` / `maxRuntimeMs` | number | none | Optional hard run-level deadline for foreground and async/background runs. Leave unset unless the user explicitly requires a wall-clock deadline; one value covers the full single, parallel, or chain launch. |
 | `turnBudget` | object | none | Optional assistant-turn budget `{ maxTurns, graceTurns }`. At `maxTurns` the child is warned to wrap up; after `graceTurns` (default 1) more assistant turns the run is aborted and partial output is returned. |
 | `toolBudget` | object | none | Optional child tool-call budget `{ soft?, hard, block? }`. At `soft` the child is nudged to finalize. After `hard`, configured tools are blocked; `block` defaults to `read`, `grep`, `find`, and `ls`, or use `"*"` to block every tool call. Final assistant text is never blocked. |
 | `cwd` | string | runtime cwd | Override working directory. |
@@ -1209,7 +1215,14 @@ Agent definitions are not loaded into context by default. Management actions let
 | `includeProgress` | boolean | false | Include full progress in result. |
 | `share` | boolean | false | Upload session export to GitHub Gist. |
 | `sessionDir` | string | derived | Override session log directory. |
-| `acceptance` | string/object/false | inferred | Override inferred gates with `"auto"`, `"attested"`, `"checked"`, `"verified"`, or `{ level: "none", reason: "..." }`. `reviewed` is inferred-only; explicit requests fail preflight. `false` is a deprecated shorthand for disabling gates. |
+| `acceptance` | string/object/false | contract-dependent | In v1, acceptance runs only when explicit and remains separate from execution. Legacy mode infers gates and accepts `"auto"`, `"attested"`, `"checked"`, `"verified"`, or `{ level: "none", reason: "..." }`; `reviewed` remains independent-review only. |
+| `agentContract` | `{ version: 1 }` | legacy | Opt into domain-neutral v1: no implicit acceptance inference, observational policy results, explicit chain gating, and explicit CompletionGuard. |
+
+### Generic agent contract v1
+
+Set `agentContract: { version: 1 }` when execution, child content, acceptance policy, and review must remain independent. Omitted acceptance means no acceptance policy. An explicit rejection is recorded without rewriting child `exitCode`, execution status, success events, or aggregates. Sequential steps default to `gateOn: "execution"`; select `gateOn: "acceptance"` only when rejection should stop the next step.
+
+CompletionGuard is also observational in v1 and runs only when the selected agent explicitly configures `completionGuard: true`; the result appears as `effects.fileMutation`. Runtime-owned results and async status expose derived `execution` and `review` projections while retaining legacy fields for compatibility. `outputSchema` validates child-owned structure and is never treated as acceptance evidence automatically. Review remains a separate reviewer run. Omit `agentContract` to preserve legacy coding-oriented inference and hard-failure behavior.
 
 `context: "fork"` fails fast when the parent session is not persisted, the current leaf is missing, or the branched child session cannot be created. When the inherited transcript contains signed Anthropic `thinking` / `redacted_thinking` blocks, `pi-subagents` strips those provider-private blocks from the forked child session. It forces thinking `off` only when the child’s effective primary or fallback model resolves through the model registry to the Anthropic provider or `anthropic-messages` API; unresolved models are treated conservatively. The result reports every affected child, including on failed runs. Use `context: "fresh"` when an Anthropic child needs thinking. Forking never silently downgrades to `fresh`. In multi-agent runs that omit `context`, each agent/task/step follows its own `defaultContext`, so a fresh-default scout can run fresh beside a fork-default worker. Pass explicit `context: "fork"` or `context: "fresh"` when you intentionally want one context for every child.
 
@@ -1499,7 +1512,7 @@ Async runs write:
 
 ## Acceptance Gates
 
-Every run resolves an effective acceptance policy. Callers may omit `acceptance` for the inferred default, or set it on single runs, top-level parallel task items, chain steps, static parallel tasks, and dynamic fanout templates.
+Legacy runs resolve an inferred acceptance policy. Generic agent contract v1 runs acceptance only when the caller explicitly sets it. Acceptance can be set on single runs, top-level parallel task items, chain steps, static parallel tasks, and dynamic fanout templates.
 
 ```ts
 {
@@ -1514,7 +1527,7 @@ Every run resolves an effective acceptance policy. Callers may omit `acceptance`
 }
 ```
 
-Acceptance policies use the levels `auto`, `none`, `attested`, `checked`, `verified`, and `reviewed`. `acceptance: "auto"` is the default. Callers may explicitly request levels through `verified`; `reviewed` is reserved for inferred policy because the current execution path cannot supply an independent reviewer result. Explicit `reviewed` fails preflight instead of spawning a child that is guaranteed to be rejected. Read-only tasks infer lightweight attestation, normal writer tasks infer checked evidence, and async/risky/dynamic writer contexts infer a reviewed gate. Agent frontmatter or `subagents.agentOverrides` may set `acceptanceRole: "read-only" | "writer"` for ambiguous tasks; explicit task mutation or no-edit intent wins over that role, while omitted metadata preserves the existing reviewer/scout/worker name heuristics. The role affects acceptance inference only and does not change tool access. The bare string `"none"` is rejected; use `{ level: "none", reason: "..." }` instead. `acceptance: false` is accepted only as a deprecated shorthand for disabling gates.
+Acceptance policies use the levels `auto`, `none`, `attested`, `checked`, `verified`, and `reviewed`. In generic agent contract v1, omission means no policy and explicit criteria/evidence determine whether a child report is required; verify-only policies run without requiring child JSON. Legacy mode defaults to `acceptance: "auto"`: read-only tasks infer lightweight attestation, normal writer tasks infer checked evidence, and async/risky/dynamic writer contexts infer a reviewed gate. Callers may explicitly request levels through `verified`; `reviewed` requires a separate independent reviewer result and cannot be supplied by worker self-report. Agent frontmatter or `subagents.agentOverrides` may set `acceptanceRole: "read-only" | "writer"` for ambiguous tasks; explicit task mutation or no-edit intent wins over that role, while omitted metadata preserves the existing reviewer/scout/worker name heuristics. The role affects acceptance inference only and does not change tool access. The bare string `"none"` is rejected; use `{ level: "none", reason: "..." }` instead. `acceptance: false` is accepted only as a deprecated shorthand for disabling gates.
 
 Acceptance provenance is stored separately from child prose:
 
@@ -1527,7 +1540,7 @@ Acceptance provenance is stored separately from child prose:
 
 For `attested` or stricter levels, the child prompt includes a standardized acceptance section and asks for a fenced `acceptance-report` JSON block. The parser canonicalizes known enum synonyms, snake_case report keys and wrappers, underscore fence tags, unambiguous scalar arrays, string booleans, and criterion-id separators. Unknown or ambiguous keys and enum values fail with field-level diagnostics. Explicit empty `changedFiles` and `testsAddedOrUpdated` arrays are recorded as not applicable; missing fields and empty required command or validation evidence still fail.
 
-Acceptance fences are removed from normal output artifacts, while the raw child transcript remains intact and per-child metadata stores the complete acceptance ledger and parsed report. Explicit failed gates fail the run. Inferred gates remain observable without failing the run.
+Acceptance fences are removed from normal output artifacts, while the raw child transcript remains intact and per-child metadata stores the complete acceptance ledger and parsed report. In generic agent contract v1, rejection is observational and does not change execution success; `gateOn: "acceptance"` controls sequential transitions. Legacy explicit failed gates retain their existing hard-failure behavior, while legacy inferred gates remain observational.
 
 ## Live progress
 

@@ -16,6 +16,7 @@ import * as path from "node:path";
 import { createEventBus, createMockPi, createTempDir, events, makeAgent, makeMinimalCtx, removeTempDir, tryImport } from "../support/helpers.ts";
 import type { MockPi } from "../support/helpers.ts";
 import { deliverInterruptRequest } from "../../src/runs/background/control-channel.ts";
+import { readAsyncRecoveryDescriptor } from "../../src/runs/background/async-resume.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
 import { MAX_CHILD_PENDING_LINE_BYTES, MAX_CHILD_STDERR_BYTES } from "../../src/runs/shared/child-protocol.ts";
 import { SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION } from "../../src/shared/types.ts";
@@ -43,7 +44,7 @@ interface AsyncResultPayload {
 	wrapUpRequested?: boolean;
 	totalTokens?: { input: number; output: number; total: number };
 	totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
-	results: Array<{ agent?: string; output?: string; success?: boolean; error?: string; protocolError?: { code?: string; stream?: string; limitBytes?: number; observedBytes?: number }; timedOut?: boolean; turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; exceededAtTurn?: number }; turnBudgetExceeded?: boolean; wrapUpRequested?: boolean; model?: string; attemptedModels?: string[]; modelAttempts?: Array<{ success?: boolean; error?: string }>; totalCost?: { inputTokens: number; outputTokens: number; costUsd: number }; structuredOutput?: unknown; intercomTarget?: string; acceptance?: { status?: string; effectiveAcceptance?: { level?: string }; childReport?: unknown; runtimeChecks?: Array<{ id?: string; status?: string; message?: string }> }; artifactPaths?: { outputPath?: string; inputPath?: string; metadataPath?: string } }>;
+	results: Array<{ agent?: string; output?: string; exitCode?: number | null; success?: boolean; error?: string; protocolError?: { code?: string; stream?: string; limitBytes?: number; observedBytes?: number }; timedOut?: boolean; turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; exceededAtTurn?: number }; turnBudgetExceeded?: boolean; wrapUpRequested?: boolean; model?: string; attemptedModels?: string[]; modelAttempts?: Array<{ success?: boolean; error?: string }>; totalCost?: { inputTokens: number; outputTokens: number; costUsd: number }; structuredOutput?: unknown; intercomTarget?: string; effects?: { fileMutation?: { status?: string; source?: string; message?: string } }; acceptance?: { status?: string; effectiveAcceptance?: { level?: string }; childReport?: unknown; runtimeChecks?: Array<{ id?: string; status?: string; message?: string }> }; artifactPaths?: { outputPath?: string; inputPath?: string; metadataPath?: string } }>;
 	outputs?: Record<string, { text?: string; structured?: unknown }>;
 	workflowGraph?: { nodes?: Array<{ kind?: string; label?: string; phase?: string; status?: string; acceptanceStatus?: string; error?: string; outputName?: string; structured?: boolean; children?: Array<{ label?: string; outputName?: string; itemKey?: string; status?: string; acceptanceStatus?: string; error?: string }> }> };
 }
@@ -989,7 +990,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 	});
 
 	it("top-level async parallel conversion preserves output, reads, and progress", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
-		mockPi.onCall({ output: "Async top-level report" });
+		mockPi.onCall({ output: "Async top-level report", structuredOutput: { ok: true } });
 		const executor = createSubagentExecutor!({
 			pi: { events: createEventBus(), getSessionName: () => undefined },
 			state: { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
@@ -1004,7 +1005,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const result = await executor.execute(
 			"async-parallel-fields",
 			{
-				tasks: [{ agent: "worker", task: "Do async work", output: "async-top-output.md", reads: ["input.md"] }],
+				tasks: [{ agent: "worker", task: "Do async work", output: "async-top-output.md", outputSchema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] }, reads: ["input.md"] }],
 				async: true,
 				clarify: false,
 			},
@@ -1028,6 +1029,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			assert.equal(payload.mode, "parallel");
 			assert.equal(payload.sessionId, "session-123");
 			assert.equal(payload.results[0]?.acceptance?.status, "checked");
+			assert.deepEqual(payload.results[0]?.structuredOutput, { ok: true });
 			assert.equal(status.sessionId, "session-123");
 			assert.equal(status.steps?.[0]?.acceptance?.status, "checked");
 		const outputPath = path.join(tempDir, ".pi-subagents", "artifacts", "outputs", asyncId, "async-top-output.md");
@@ -1231,6 +1233,84 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.ok(result.results[0]?.acceptance?.childReport);
 		assert.equal(result.results[0]?.acceptance?.reviewResult?.status, "needs-parent-decision");
 		assert.equal(status.steps?.[0]?.acceptance?.status, "rejected");
+	});
+
+	it("supports outputSchema on direct async single launches", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "done", structuredOutput: { answer: 42 } });
+		const id = `async-direct-structured-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Return a structured answer",
+			agentConfig: makeAgent("worker", { completionGuard: false }),
+			agentContract: { version: 1, source: "call" },
+			acceptance: { verify: [{ id: "structured-output", command: `${JSON.stringify(process.execPath)} -e "process.exit(0)"` }] },
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-structured" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			outputSchema: { type: "object", required: ["answer"], properties: { answer: { type: "number" } } },
+		});
+
+		const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id), "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, true);
+		assert.equal(payload.results[0]?.exitCode, 0);
+		assert.deepEqual(payload.results[0]?.structuredOutput, { answer: 42 });
+		const descriptor = readAsyncRecoveryDescriptor(path.join(ASYNC_DIR, id));
+		assert.deepEqual(descriptor?.agentContract, { version: 1, source: "call" });
+		assert.deepEqual(descriptor?.acceptance, {
+			verify: [{ id: "structured-output", command: `${JSON.stringify(process.execPath)} -e "process.exit(0)"` }],
+		});
+	});
+
+	it("uses v1 gateOn acceptance without rewriting child execution results", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const artifactConfig = {
+			enabled: false,
+			includeInput: false,
+			includeOutput: false,
+			includeJsonl: false,
+			includeMetadata: false,
+			cleanupDays: 7,
+		};
+		const acceptance = { verify: [{ id: "reject", command: `${JSON.stringify(process.execPath)} -e "process.exit(1)"` }] };
+		const agents = [makeAgent("worker", { completionGuard: false }), makeAgent("reporter", { completionGuard: false })];
+		const launch = (id: string, gateOn?: "acceptance") => executeAsyncChain(id, {
+			chain: [
+				{ agent: "worker", task: "Return worker result", acceptance, ...(gateOn ? { gateOn } : {}) },
+				{ agent: "reporter", task: "Return report" },
+			],
+			agentContract: { version: 1, source: "call" },
+			agents,
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-gate-on" },
+			artifactConfig,
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		mockPi.onCall({ output: "worker completed" });
+		mockPi.onCall({ output: "reporter completed" });
+		const defaultId = `async-gate-execution-${Date.now().toString(36)}`;
+		launch(defaultId);
+		const defaultPayload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(defaultId), "utf-8")) as AsyncResultPayload;
+		assert.equal(defaultPayload.success, true);
+		assert.equal(defaultPayload.results.length, 2);
+		assert.equal(defaultPayload.results[0]?.exitCode, 0);
+		assert.equal(defaultPayload.results[0]?.acceptance?.status, "rejected");
+		assert.deepEqual((defaultPayload.results[0] as { execution?: unknown })?.execution, { state: "completed", exitCode: 0 });
+		assert.deepEqual((defaultPayload.results[0] as { review?: unknown })?.review, { status: "not-requested" });
+		const defaultStatus = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, defaultId, "status.json"), "utf-8"));
+		assert.deepEqual(defaultStatus.execution, { state: "completed" });
+		assert.deepEqual(defaultStatus.review, { status: "not-requested" });
+
+		mockPi.onCall({ output: "worker completed" });
+		const acceptanceId = `async-gate-acceptance-${Date.now().toString(36)}`;
+		launch(acceptanceId, "acceptance");
+		const acceptancePayload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(acceptanceId), "utf-8")) as AsyncResultPayload;
+		assert.equal(acceptancePayload.success, false);
+		assert.equal(acceptancePayload.state, "failed");
+		assert.equal(acceptancePayload.results.length, 1);
+		assert.equal(acceptancePayload.results[0]?.exitCode, 0);
+		assert.equal(acceptancePayload.results[0]?.success, true);
+		assert.equal(acceptancePayload.results[0]?.acceptance?.status, "rejected");
 	});
 
 	it("top-level async chain suppresses progress for {task} review-only tasks", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
@@ -1583,6 +1663,39 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.deepEqual(status.steps?.slice(1).map((step) => step.thinking), ["off", "off"]);
 	});
 
+	it("keeps empty async v1 dynamic acceptance rejection observational under the execution gate", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "targets", structuredOutput: { items: [] } });
+		mockPi.onCall({ output: "continued after rejected group acceptance" });
+		const id = `async-dynamic-empty-v1-${Date.now().toString(36)}`;
+		const result = executeAsyncChain(id, {
+			chain: [
+				{ agent: "producer", task: "Produce targets", as: "targets", outputSchema: { type: "object" } },
+				{
+					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 2, onEmpty: "skip" },
+					parallel: { agent: "reviewer", task: "Review {target.path}" },
+					collect: { as: "reviews" },
+					acceptance: { level: "verified", verify: [{ id: "reject-empty", command: "node -e \"process.exit(1)\"" }] },
+				},
+				{ agent: "writer", task: "Use {outputs.reviews}" },
+			],
+			agents: [makeAgent("producer"), makeAgent("reviewer"), makeAgent("writer")],
+			agentContract: { version: 1, source: "call" },
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-dynamic-empty-v1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		assert.ok(!result.isError);
+		const payload = await readAsyncPayload(id);
+		const dynamicNode = payload.workflowGraph?.nodes?.[1];
+		assert.equal(payload.success, true, JSON.stringify(payload));
+		assert.equal(mockPi.callCount(), 2);
+		assert.equal(dynamicNode?.status, "completed");
+		assert.equal(dynamicNode?.acceptanceStatus, "rejected");
+		assert.match(payload.results.at(-1)?.output ?? "", /continued after rejected group acceptance/);
+	});
+
 	it("applies read-only acceptance roles to async dynamic children and their aggregate group", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "targets", structuredOutput: { items: [{ path: "src/a.ts" }, { path: "src/b.ts" }] } });
 		const readOnlyReport = [
@@ -1912,6 +2025,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				model: "openai/gpt-5-mini:high",
 				fallbackModels: ["anthropic/claude-sonnet-4:low"],
 			}),
+			agentContract: { version: "legacy", source: "legacy-default" },
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			availableModels: [
 				{ provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini" },
@@ -1948,6 +2062,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.deepEqual(descriptor.fallbackModels, ["anthropic/claude-sonnet-4:low"]);
 		assert.equal(descriptor.cwd, tempDir);
 		assert.equal(descriptor.sessionDir, path.join(sessionRoot, `async-${id}`));
+		assert.deepEqual(descriptor.agentContract, { version: "legacy", source: "legacy-default" });
 		assert.equal(Object.hasOwn(descriptor, "task"), false);
 		if (process.platform !== "win32") assert.equal(fs.statSync(descriptorPath).mode & 0o777, 0o600);
 
@@ -2554,6 +2669,31 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.match(eventsText, /Subagent failed: worker/);
 		assert.doesNotMatch(eventsText, /Status:/);
 		assert.doesNotMatch(eventsText, /Interrupt:/);
+	});
+
+	it("records v1 async CompletionGuard rejection without failing execution", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "I’ll do that now and report back after implementing." });
+		const id = `async-v1-mutation-effect-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Implement the approved fixes",
+			agentConfig: makeAgent("worker", { completionGuard: true }),
+			agentContract: { version: 1, source: "call" },
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id), "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, true);
+		assert.equal(payload.exitCode, 0);
+		assert.equal(payload.results[0]?.exitCode, 0);
+		assert.equal(payload.results[0]?.success, true);
+		assert.equal(payload.results[0]?.effects?.fileMutation?.status, "rejected");
+		assert.match(payload.results[0]?.effects?.fileMutation?.message ?? "", /completed without making edits/);
+		const eventsText = fs.readFileSync(path.join(ASYNC_DIR, id, "events.jsonl"), "utf-8");
+		assert.doesNotMatch(eventsText, /"reason":"completion_guard"/);
 	});
 
 	it("background bash-enabled non-implementation agents can opt out of the completion guard", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {

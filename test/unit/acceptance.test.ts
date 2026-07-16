@@ -16,6 +16,7 @@ import {
 	validateExecutionAcceptance,
 } from "../../src/runs/shared/acceptance.ts";
 import { extractChildWrittenOutput } from "../../src/runs/shared/single-output.ts";
+import { deriveReviewProjection } from "../../src/shared/types.ts";
 
 function reportData(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 	return {
@@ -138,6 +139,57 @@ describe("acceptance gates", () => {
 	it("preserves risky keyword inference when acceptance role metadata is omitted", () => {
 		for (const task of ["Inspect the security posture", "Read-only security audit"]) {
 			assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task }).level, "reviewed", task);
+		}
+	});
+
+	it("v1 omits implicit acceptance and supports verify-only evaluation without a child report", async () => {
+		const omitted = resolveEffectiveAcceptance({
+			agentName: "worker",
+			task: "Implement the fix",
+			mode: "single",
+			async: true,
+			agentContract: { version: 1, source: "call" },
+		});
+		assert.equal(omitted, undefined);
+
+		const verifyOnly = resolveEffectiveAcceptance({
+			agentName: "worker",
+			task: "Return the result",
+			explicit: { verify: [{ id: "runtime-check", command: `${JSON.stringify(process.execPath)} -e "process.exit(0)"` }] },
+			agentContract: { version: 1, source: "call" },
+		});
+		assert.ok(verifyOnly);
+		assert.equal(verifyOnly.requiresChildReport, false);
+		assert.equal(formatAcceptancePrompt(verifyOnly), "");
+		const ledger = await evaluateAcceptance({ acceptance: verifyOnly, output: "ordinary child output", cwd: process.cwd() });
+		assert.equal(ledger.status, "verified");
+		assert.equal(ledger.childReport, undefined);
+		assert.equal(ledger.verifyRuns[0]?.status, "passed");
+
+		const marker = path.join(os.tmpdir(), `pi-acceptance-v1-report-verify-${process.pid}-${Date.now()}`);
+		try {
+			const combined = resolveEffectiveAcceptance({
+				agentName: "worker",
+				task: "Return the result",
+				explicit: {
+					level: "checked",
+					criteria: ["Report the measured result"],
+					verify: [{
+						id: "runtime-check-after-missing-report",
+						command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(`require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran")`)}`,
+					}],
+				},
+				agentContract: { version: 1, source: "call" },
+			});
+			assert.ok(combined);
+			assert.equal(combined.requiresChildReport, true);
+			const combinedLedger = await evaluateAcceptance({ acceptance: combined, output: "ordinary child output", cwd: process.cwd() });
+			assert.equal(combinedLedger.status, "rejected");
+			assert.equal(combinedLedger.runtimeChecks.some((check) => check.id === "attestation" && check.status === "failed"), true);
+			assert.equal(combinedLedger.verifyRuns[0]?.status, "passed");
+			assert.equal(fs.readFileSync(marker, "utf-8"), "ran");
+		} finally {
+			fs.rmSync(marker, { force: true });
 		}
 	});
 
@@ -474,6 +526,22 @@ describe("acceptance gates", () => {
 			assert.equal(ledger.status, "checked");
 			assert.equal(ledger.runtimeChecks.find((check) => check.id === "evidence:changed-files")?.status, "not-applicable");
 			assert.equal(ledger.runtimeChecks.find((check) => check.id === "evidence:tests-added")?.status, "not-applicable");
+
+			const legacyCheckedWithVerify = resolveEffectiveAcceptance({
+				agentName: "worker",
+				task: "Implement a fix",
+				explicit: {
+					level: "checked",
+					verify: [{ id: "legacy-ignored", command: `${JSON.stringify(process.execPath)} -e "process.exit(1)"` }],
+				},
+			});
+			const legacyLedger = await evaluateAcceptance({
+				acceptance: legacyCheckedWithVerify,
+				output: report({ changedFiles: [], testsAddedOrUpdated: [] }),
+				cwd,
+			});
+			assert.equal(legacyLedger.status, "checked");
+			assert.deepEqual(legacyLedger.verifyRuns, []);
 		} finally {
 			fs.rmSync(cwd, { recursive: true, force: true });
 		}
@@ -639,6 +707,10 @@ describe("acceptance gates", () => {
 			});
 			assert.equal(blockers.status, "rejected");
 			assert.equal(blockers.reviewResult?.status, "blockers");
+			assert.deepEqual(deriveReviewProjection(blockers), {
+				status: "blockers",
+				findings: [{ severity: "blocker", issue: "Missing test", rationale: "Acceptance requires test evidence." }],
+			});
 
 			const unavailable = await evaluateAcceptance({ acceptance, output: report(), cwd });
 			assert.equal(unavailable.status, "rejected");

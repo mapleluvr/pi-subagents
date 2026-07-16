@@ -65,6 +65,12 @@ const JsonSchemaObject = Type.Unsafe({
 	description: "JSON Schema object for strict structured output. Non-object roots are rejected.",
 });
 
+const AgentContractOverride = Type.Object({
+	version: Type.Integer({ enum: [1] }),
+}, { additionalProperties: false, description: "Opt into generic agent contract v1." });
+
+const GateOnOverride = Type.String({ enum: ["execution", "acceptance"] });
+
 const AcceptanceOverride = Type.Unsafe({
 	anyOf: [
 		{ type: "string", enum: ["auto", "attested", "checked", "verified", "reviewed"] },
@@ -95,6 +101,7 @@ const ToolBudgetOverride = Type.Object({
 const TaskItem = Type.Object({
 	agent: Type.String(), 
 	task: Type.String(), 
+	outputSchema: Type.Optional(JsonSchemaObject),
 	cwd: Type.Optional(Type.String()),
 	count: Type.Optional(Type.Integer({ minimum: 1, description: "Repeat this parallel task N times with the same settings." })),
 	output: Type.Optional(OutputOverride),
@@ -105,6 +112,7 @@ const TaskItem = Type.Object({
 	skill: Type.Optional(SkillOverride),
 	toolBudget: Type.Optional(ToolBudgetOverride),
 	acceptance: Type.Optional(AcceptanceOverride),
+	gateOn: Type.Optional(GateOnOverride),
 });
 
 // Parallel task item (within a parallel step)
@@ -125,6 +133,7 @@ export const ParallelTaskSchema = Type.Object({
 	model: Type.Optional(Type.String({ description: "Override model for this task" })),
 	toolBudget: Type.Optional(ToolBudgetOverride),
 	acceptance: Type.Optional(AcceptanceOverride),
+	gateOn: Type.Optional(GateOnOverride),
 });
 
 export const DynamicExpandSchema = Type.Object({
@@ -153,6 +162,7 @@ export const DynamicParallelTemplateSchema = Type.Object({
 	model: Type.Optional(Type.String({ description: "Override model for this task" })),
 	toolBudget: Type.Optional(ToolBudgetOverride),
 	acceptance: Type.Optional(AcceptanceOverride),
+	gateOn: Type.Optional(GateOnOverride),
 }, { additionalProperties: false });
 
 export const DynamicCollectSchema = Type.Object({
@@ -179,6 +189,7 @@ export const ChainItem = Type.Object({
 	model: Type.Optional(Type.String({ description: "Override model for this step" })),
 	toolBudget: Type.Optional(ToolBudgetOverride),
 	acceptance: Type.Optional(AcceptanceOverride),
+	gateOn: Type.Optional(GateOnOverride),
 	parallel: Type.Optional(Type.Unsafe({
 		anyOf: [
 			Type.Array(ParallelTaskSchema, { minItems: 1, description: "Tasks to run in parallel" }),
@@ -265,6 +276,7 @@ const SubagentParamsSchema = Type.Object({
 	})),
 	chainDir: Type.Optional(Type.String({ description: "Persistent chain artifact directory; defaults to user-scoped temp storage." })),
 	async: Type.Optional(Type.Boolean({ description: "Run in background (default: false, or per config)" })),
+	agentContract: Type.Optional(AgentContractOverride),
 	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Optional run-level timeout in ms for foreground and async/background runs. Alias of maxRuntimeMs." })),
 	maxRuntimeMs: Type.Optional(Type.Integer({ minimum: 1, description: "Alias of timeoutMs for optional run-level timeout in foreground and async/background runs." })),
 	turnBudget: Type.Optional(TurnBudgetOverride),
@@ -289,6 +301,7 @@ const SubagentParamsSchema = Type.Object({
 		description: "Output file for single agent (string), or false to disable. Relative paths resolve against cwd.",
 	})),
 	outputMode: Type.Optional(OutputModeOverride),
+	outputSchema: Type.Optional(JsonSchemaObject),
 	skill: Type.Optional(SkillOverride),
 	model: Type.Optional(Type.String({ description: "Override model for single agent (e.g. 'anthropic/claude-sonnet-4')" })),
 	acceptance: Type.Optional(AcceptanceOverride),

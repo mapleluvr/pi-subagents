@@ -16,13 +16,13 @@ Use this skill when the parent orchestrator needs to launch a specialized subage
 
 ## When to Use
 
-- **Complex work orchestration**: use Fable mode as the default parent-agent loop for complex work. Complex means the task has multiple moving parts, unclear acceptance, cross-cutting code, meaningful user-visible impact, expensive or irreversible validation, broad review surface, or the user asks for orchestration. Lightweight one-off delegation can stay lightweight.
+- **Complex coding-work orchestration**: Fable mode is an optional coding recipe for work with multiple moving parts, unclear acceptance, cross-cutting code, meaningful user-visible impact, expensive validation, or broad review surface. Generic delegation does not imply this workflow.
 - **Advisory review**: use fresh-context `reviewer` agents for adversarial code review, or fork to `oracle` when inherited decisions and drift matter
 - **Implementation handoff**: have `oracle` advise, then `worker` implement only after an approved direction
 - **Recon and planning**: use `scout` or `context-builder`, then `planner`
 - **Parallel exploration**: run multiple non-conflicting tasks concurrently
 - **Regular skill specialists**: when discovery shows proactive skill subagent suggestions and the current work is broad enough, launch a small fresh-context fanout that asks one subagent per relevant regularly used skill to apply that skill's perspective to the task
-- **Long-running work**: launch async/background runs and inspect them later; use `timeoutMs` or `maxRuntimeMs` when a foreground or async run needs a hard max runtime, `turnBudget: { maxTurns, graceTurns }` for a soft assistant-turn budget, or `toolBudget: { soft?, hard, block? }` to nudge after a tool-call threshold and then block read/search tools so the child can finalize
+- **Long-running work**: launch async/background runs and inspect them later. Leave `timeoutMs`/`maxRuntimeMs` unset unless the user explicitly requires a hard wall-clock deadline; one value limits the whole foreground or async run. Use `turnBudget: { maxTurns, graceTurns }` or `toolBudget: { soft?, hard, block? }` when the goal is to bound agent effort rather than wall-clock time.
 - **Subagent control**: watch needs-attention signals and soft-interrupt only when a delegated run is genuinely blocked
 - **Agent authoring**: create, update, or override agents and chains for a project
 
@@ -44,6 +44,32 @@ Humans often use the slash-command layer instead:
 
 Prefer the tool when you are writing agent logic. Prefer the slash commands when
 you are guiding a human through an interactive flow.
+
+## Generic Agent Contract V1
+
+Use `agentContract: { version: 1 }` when delegation must be domain-neutral and policy must be explicit. Under v1:
+
+- omitted `acceptance` means no acceptance policy; task wording, agent names, async mode, and write intent do not infer one
+- explicit acceptance is observational: rejection is recorded without changing execution `exitCode` or execution status
+- runtime results expose derived `execution` and `review` projections while retaining legacy fields for compatibility
+- sequential steps default to `gateOn: "execution"`; use `gateOn: "acceptance"` only when that policy should stop the next step
+- CompletionGuard runs only when the selected agent explicitly has `completionGuard: true`; its `effects.fileMutation` result is observational
+- `outputSchema` is available on direct single launches, top-level `tasks[]`, chain steps, and typed delegation; it validates child-owned structure and does not imply acceptance or review
+
+Omitting `agentContract` preserves legacy Coding-Agent-first inference and failure behavior for compatibility. Independent review remains a separate reviewer run in both modes.
+
+```typescript
+subagent({
+  agent: "delegate",
+  task: "Return the measured values.",
+  agentContract: { version: 1 },
+  outputSchema: {
+    type: "object",
+    properties: { values: { type: "array", items: { type: "number" } } },
+    required: ["values"]
+  }
+})
+```
 
 Packaged prompt shortcuts are also available for repeatable workflows. Treat them as reusable orchestration recipes, not just human slash commands. When the user asks for one of these shapes, or when the workflow clearly fits, apply the same pattern directly with `subagent(...)` and other tools:
 - `/parallel-review` — fresh-context reviewers with distinct review angles, then synthesis
@@ -802,9 +828,9 @@ subagent({
 })
 ```
 
-### Fable mode for complex work
+### Coding recipe: Fable mode
 
-Fable mode is the default orchestration posture for complex work. It is not a separate runtime mode; it is how the parent session uses `subagent`, `interview`, `subagent_wait`, acceptance contracts, artifacts, and fresh-context review when the work has real complexity. Use it for complex features, broad refactors, migrations, ambiguous goals, multi-system changes, expensive validation, user-visible behavior changes, or any request to plan/orchestrate end to end. Do not force it onto tiny one-shot delegation.
+Fable mode is an optional Coding-Agent-first orchestration recipe, not a generic runtime default. It is how a parent session may combine `subagent`, `interview`, `subagent_wait`, acceptance policies, artifacts, and fresh-context review for complex software changes. Use it for complex features, broad refactors, migrations, multi-system code changes, expensive validation, or explicit requests for end-to-end coding orchestration. Do not apply it to domain-neutral delegation merely because a task is complex.
 
 Run the work through seven gated phases:
 
@@ -840,7 +866,7 @@ clarify → validation contract → planner → async worker → parallel async 
 
 The validation contract defines acceptance before code is written: expected behavior, acceptance checks, commands or user flows to exercise, and evidence the worker should return. Keep it lightweight for small tasks, but make it explicit enough that reviewers and validators are checking the intended outcome rather than the worker’s own assumptions.
 
-Use the structured `acceptance` field when the run should carry an explicit acceptance contract. If omitted, subagents infer an effective acceptance policy from role, mode, and risk. Use `level: "checked"` for ordinary writer evidence gates and `level: "verified"` when the runtime should run explicit validation commands. Do not explicitly request `level: "reviewed"`: the current run cannot supply an independent reviewer result, so that level is reserved for inferred policy. Orchestrate a separate reviewer instead. To disable gates, use `{ level: "none", reason: "..." }`; the bare string `"none"` is rejected, and `false` is accepted only as a deprecated shorthand. Do not call a run reviewed just because the worker says it is done; reviewed means a reviewer gate returned a result. Child-reported command success is evidence, not runtime verification.
+Use the structured `acceptance` field when a run should carry an explicit acceptance policy. With `agentContract: { version: 1 }`, omission means no acceptance and rejection remains separate from execution; use step-level `gateOn: "acceptance"` when rejection should stop a chain. Legacy mode still infers an effective policy from role, mode, and risk. In that coding recipe, `level: "checked"` requests writer evidence and `level: "verified"` runs explicit validation commands. Do not explicitly request `level: "reviewed"`: independent review is a separate reviewer run. To disable legacy gates, use `{ level: "none", reason: "..." }`; the bare string `"none"` is rejected, and `false` is deprecated. Child-reported command success is evidence, not runtime verification.
 
 The first `worker` implements the approved plan. The parent continues with independent inspection or validation prep while it runs, not parallel edits to the same worktree. When the async worker completes, treat its handoff as the transition into review, not as final completion, unless the user explicitly asked for worker-only work, review-only output, or to stop after implementation. Parallel reviewers inspect the resulting diff from fresh context. Validators check behavior with the best available evidence: commands, tests, browser/CLI interaction, screenshots, logs, or manual reproduction notes. The final `worker` applies synthesized review fixes in forked context, then the parent looks over the final diff before completing. The parent may launch these steps as an initial async chain when the workflow is already clear, or as follow-up subagent runs after each async completion. Initial chains should pass `async: true` so the main chat is unblocked; avoid `clarify: true` unless the user asked for foreground clarification. Do not stop after parallel review unless the user explicitly asked for review-only output or the review surfaced a decision that needs approval first.
 

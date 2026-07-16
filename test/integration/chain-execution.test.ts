@@ -40,6 +40,7 @@ interface TestSequentialStep {
 	progress?: boolean;
 	cwd?: string;
 	acceptance?: unknown;
+	gateOn?: "execution" | "acceptance";
 }
 
 interface TestParallelTask {
@@ -57,6 +58,7 @@ interface TestParallelTask {
 	progress?: boolean;
 	cwd?: string;
 	acceptance?: unknown;
+	gateOn?: "execution" | "acceptance";
 }
 
 type TestChainStep = TestSequentialStep | {
@@ -399,6 +401,34 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.equal(failed.isError, true);
 		assert.equal(failed.details.results[0]?.acceptance?.status, "rejected");
 		assert.match(failed.details.results[0]?.error ?? "", /tests-added evidence missing/);
+	});
+
+	it("uses explicit gateOn to keep acceptance separate from chain execution", async () => {
+		const rejectedAcceptance = { verify: [{ id: "reject", command: `${JSON.stringify(process.execPath)} -e "process.exit(1)"` }] };
+		const contract = { version: 1, source: "call" };
+		const agents = [makeAgent("worker", { completionGuard: false }), makeAgent("reporter", { completionGuard: false })];
+
+		mockPi.onCall({ output: "worker completed" });
+		mockPi.onCall({ output: "reporter completed" });
+		const executionGated = await executeChain!(makeChainParams([
+			{ agent: "worker", task: "Return the worker result", acceptance: rejectedAcceptance },
+			{ agent: "reporter", task: "Return the report" },
+		], agents, { agentContract: contract }));
+		assert.equal(executionGated.isError, undefined);
+		assert.equal(executionGated.details.results.length, 2);
+		assert.equal(executionGated.details.results[0]?.exitCode, 0);
+		assert.equal(executionGated.details.results[0]?.acceptance?.status, "rejected");
+
+		mockPi.onCall({ output: "worker completed" });
+		const acceptanceGated = await executeChain!(makeChainParams([
+			{ agent: "worker", task: "Return the worker result", acceptance: rejectedAcceptance, gateOn: "acceptance" },
+			{ agent: "reporter", task: "must not run" },
+		], agents, { agentContract: contract }));
+		assert.equal(acceptanceGated.isError, true);
+		assert.equal(acceptanceGated.details.results.length, 1);
+		assert.equal(acceptanceGated.details.results[0]?.exitCode, 0);
+		assert.equal(acceptanceGated.details.results[0]?.acceptance?.status, "rejected");
+		assert.match(acceptanceGated.content[0]?.text ?? "", /Acceptance verification 'reject' failed/);
 	});
 
 	it("runs explicit verified acceptance commands and does not trust child command claims as verification", async () => {
@@ -875,6 +905,35 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.deepEqual(result.details.outputs?.reviews?.structured, []);
 		assert.equal(result.details.workflowGraph?.nodes[1]?.status, "completed");
 		assert.deepEqual(result.details.workflowGraph?.nodes[1]?.children, []);
+	});
+
+	it("keeps empty v1 dynamic acceptance rejection observational under the execution gate", async () => {
+		mockPi.onCall({ output: "targets", structuredOutput: { items: [] } });
+		mockPi.onCall({ output: "continued after rejected group acceptance" });
+		const agents = [makeAgent("scout"), makeAgent("reviewer"), makeAgent("writer")];
+
+		const result = await executeChain(
+			makeChainParams(
+				[
+					{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
+					{
+						expand: { from: { output: "targets", path: "/items" }, key: "/path", maxItems: 4, onEmpty: "skip" },
+						parallel: { agent: "reviewer", task: "Review {item.path}" },
+						collect: { as: "reviews" },
+						acceptance: { level: "verified", verify: [{ id: "reject-empty", command: "node -e \"process.exit(1)\"" }] },
+					},
+					{ agent: "writer", task: "Use {outputs.reviews}" },
+				],
+				agents,
+				{ agentContract: { version: 1, source: "call" } },
+			),
+		);
+
+		assert.ok(!result.isError, `chain should continue: ${JSON.stringify(result.content)}`);
+		assert.equal(mockPi.callCount(), 2);
+		assert.equal(result.details.workflowGraph?.nodes[1]?.status, "completed");
+		assert.equal(result.details.workflowGraph?.nodes[1]?.acceptanceStatus, "rejected");
+		assert.match(result.details.results?.at(-1)?.finalOutput ?? "", /continued after rejected group acceptance/);
 	});
 
 	it("marks dynamic collect schema failures as failed graph groups", async () => {

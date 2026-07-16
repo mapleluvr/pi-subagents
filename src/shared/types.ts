@@ -299,9 +299,11 @@ export interface SteeringRecoveryDescriptor {
 	skillPath?: string[];
 	agentFilePath?: string;
 	completionGuard?: boolean;
+	agentContract?: ResolvedAgentContract;
 	memory?: { scope: "project" | "user"; path: string };
 	outputPath?: string;
 	outputMode: "inline" | "file-only";
+	structuredOutputSchema?: JsonSchemaObject;
 	acceptance?: AcceptanceInput;
 	controlConfig?: ResolvedControlConfig;
 	absoluteDeadlineAt?: number;
@@ -483,6 +485,8 @@ export interface ResolvedAcceptanceGate extends AcceptanceGate {
 export interface ResolvedAcceptanceConfig {
 	level: Exclude<AcceptanceLevel, "auto">;
 	explicit: boolean;
+	contractVersion?: 1;
+	requiresChildReport?: boolean;
 	inferredReason: string[];
 	criteria: ResolvedAcceptanceGate[];
 	evidence: AcceptanceEvidenceKind[];
@@ -581,6 +585,27 @@ export interface ProtocolOutputLimit {
 	diagnosticTail: string;
 }
 
+export interface FileMutationEffectResult {
+	status: "not-requested" | "satisfied" | "rejected";
+	source: "legacy-heuristic" | "agent-completion-guard";
+	message?: string;
+}
+
+export interface AgentEffectResults {
+	fileMutation: FileMutationEffectResult;
+}
+
+export interface ExecutionProjection {
+	state: "queued" | "running" | "completed" | "failed" | "paused" | "stopped" | "detached";
+	exitCode?: number | null;
+	error?: string;
+}
+
+export interface ReviewProjection {
+	status: "not-requested" | "pending" | "not-run" | AcceptanceReviewResult["status"];
+	findings?: AcceptanceReviewResult["findings"];
+}
+
 export interface SingleResult {
 	agent: string;
 	task: string;
@@ -600,6 +625,11 @@ export interface SingleResult {
 	model?: string;
 	attemptedModels?: string[];
 	modelAttempts?: ModelAttempt[];
+	agentContract?: ResolvedAgentContract;
+	execution?: ExecutionProjection;
+	review?: ReviewProjection;
+	effects?: AgentEffectResults;
+	completionGuardTriggered?: boolean;
 	controlEvents?: ControlEvent[];
 	error?: string;
 	protocolError?: ProtocolOutputLimit;
@@ -624,6 +654,57 @@ export interface SingleResult {
 	transcriptError?: string;
 	children?: NestedRunSummary[];
 	watchdog?: ChildWatchdogProgress;
+}
+
+export function deriveExecutionProjection(input: {
+	status?: string;
+	exitCode?: number | null;
+	error?: string;
+	detached?: boolean;
+	interrupted?: boolean;
+	timedOut?: boolean;
+	stopped?: boolean;
+}): ExecutionProjection {
+	let state: ExecutionProjection["state"];
+	if (input.stopped || input.status === "stopped") state = "stopped";
+	else if (input.timedOut || input.status === "failed") state = "failed";
+	else if (input.interrupted || input.status === "paused") state = "paused";
+	else if (input.status === "complete" || input.status === "completed") state = "completed";
+	else if (input.detached || input.status === "detached") state = "detached";
+	else if (input.status === "queued" || input.status === "pending") state = "queued";
+	else if (input.status === "running") state = "running";
+	else if (input.exitCode !== undefined && input.exitCode !== null && input.exitCode !== 0) state = "failed";
+	else state = "completed";
+	return {
+		state,
+		...(input.exitCode !== undefined ? { exitCode: input.exitCode } : {}),
+		...(input.error ? { error: input.error } : {}),
+	};
+}
+
+export function deriveReviewProjection(acceptance?: AcceptanceLedger): ReviewProjection {
+	if (!acceptance?.effectiveAcceptance.review) return { status: "not-requested" };
+	if (acceptance.reviewResult) return { status: acceptance.reviewResult.status, findings: acceptance.reviewResult.findings };
+	if (acceptance.status === "pending") return { status: "pending" };
+	return { status: "not-run" };
+}
+
+export function deriveAggregateReviewProjection(acceptanceLedgers: Array<AcceptanceLedger | undefined>): ReviewProjection {
+	const projections = acceptanceLedgers.map(deriveReviewProjection).filter((projection) => projection.status !== "not-requested");
+	if (projections.length === 0) return { status: "not-requested" };
+	const findings = projections.flatMap((projection) => projection.findings ?? []);
+	for (const status of ["blockers", "needs-parent-decision", "pending", "not-run", "no-blockers"] as const) {
+		if (projections.some((projection) => projection.status === status)) {
+			return { status, ...(findings.length ? { findings } : {}) };
+		}
+	}
+	return { status: "not-run" };
+}
+
+export function applySingleResultProjections(result: SingleResult): SingleResult {
+	result.execution = deriveExecutionProjection({ ...result, status: result.progress?.status });
+	result.review = deriveReviewProjection(result.acceptance);
+	return result;
 }
 
 export interface Details {
@@ -807,6 +888,7 @@ export interface AsyncStartedEvent {
 	timeoutMs?: number;
 	deadlineAt?: number;
 	turnBudget?: TurnBudgetState;
+	agentContract?: ResolvedAgentContract;
 	nestedRoute?: NestedRouteInfo;
 }
 
@@ -834,6 +916,9 @@ export interface AsyncStatus {
 	timedOut?: boolean;
 	stopped?: boolean;
 	turnBudget?: TurnBudgetState;
+	agentContract?: ResolvedAgentContract;
+	execution?: ExecutionProjection;
+	review?: ReviewProjection;
 	turnBudgetExceeded?: boolean;
 	wrapUpRequested?: boolean;
 	toolBudget?: ToolBudgetState;
@@ -889,6 +974,9 @@ export interface AsyncStatus {
 		structuredOutput?: unknown;
 		structuredOutputPath?: string;
 		structuredOutputSchemaPath?: string;
+		execution?: ExecutionProjection;
+		review?: ReviewProjection;
+		effects?: AgentEffectResults;
 		acceptance?: AcceptanceLedger;
 		watchdog?: ChildWatchdogProgress;
 	}>;
@@ -964,6 +1052,8 @@ export interface ForegroundResumeChild {
 	transcriptPath?: string;
 	transcriptError?: string;
 	detachedReason?: string;
+	agentContract?: ResolvedAgentContract;
+	effects?: AgentEffectResults;
 	acceptance?: AcceptanceLedger;
 	updatedAt?: number;
 }
@@ -1108,6 +1198,7 @@ export interface RunSyncOptions {
 		schemaPath: string;
 		outputPath: string;
 	};
+	agentContract?: ResolvedAgentContract;
 	acceptance?: AcceptanceInput;
 	acceptanceContext?: {
 		mode?: SubagentRunMode;
@@ -1150,8 +1241,47 @@ export interface ScheduledRunsConfig {
 	maxPending?: number;
 }
 
+export interface AgentContractConfig {
+	version: 1;
+}
+
+export type ResolvedAgentContract =
+	| { version: "legacy"; source: "legacy-default" }
+	| { version: 1; source: "call" | "config" };
+
+function validateAgentContractConfig(value: unknown, label: string): AgentContractConfig | undefined {
+	if (value === undefined) return undefined;
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		throw new Error(`${label} must be an object.`);
+	}
+	const record = value as Record<string, unknown>;
+	for (const key of Object.keys(record)) {
+		if (key !== "version") throw new Error(`${label}.${key} is not supported.`);
+	}
+	if (record.version !== 1) throw new Error(`${label}.version must be 1.`);
+	return { version: 1 };
+}
+
+export function resolveAgentContract(callValue?: unknown, configValue?: unknown): ResolvedAgentContract {
+	const call = validateAgentContractConfig(callValue, "agentContract");
+	if (call) return { version: call.version, source: "call" };
+	const config = validateAgentContractConfig(configValue, "config.agentContract");
+	if (config) return { version: config.version, source: "config" };
+	return { version: "legacy", source: "legacy-default" };
+}
+
+export function shouldGateOnAcceptance(
+	gateOn: "execution" | "acceptance" | undefined,
+	contract: ResolvedAgentContract,
+): boolean {
+	if (gateOn === "acceptance") return true;
+	if (gateOn === "execution") return false;
+	return contract.version === "legacy";
+}
+
 export interface ExtensionConfig {
 	asyncByDefault?: boolean;
+	agentContract?: AgentContractConfig;
 	/** Show the above-editor async runs widget. Defaults to true. */
 	asyncWidget?: boolean;
 	/** Tool description variant registered for the parent-facing subagent tool. Defaults to full. */

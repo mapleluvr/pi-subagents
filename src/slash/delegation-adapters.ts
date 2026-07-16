@@ -92,6 +92,8 @@ export interface PromptTemplateBridgeResult {
 			turnBudgetExceeded?: boolean;
 			toolBudgetBlocked?: boolean;
 			savedOutputPath?: string;
+			structuredOutput?: unknown;
+			agentContract?: { version?: "legacy" | 1 };
 			sessionFile?: string;
 			acceptance?: SubagentDelegationAcceptanceResult;
 			usage?: { turns?: number };
@@ -122,6 +124,7 @@ export interface DelegatedSubagentExecutionParams {
 	context: "fresh" | "fork";
 	model?: string;
 	cwd: string;
+	agentContract?: { version: 1 };
 	worktree?: boolean;
 	timeoutMs?: number;
 	turnBudget?: TurnBudgetConfig;
@@ -129,6 +132,7 @@ export interface DelegatedSubagentExecutionParams {
 	skill?: string | string[] | boolean;
 	output?: string | boolean;
 	outputMode?: "inline" | "file-only";
+	outputSchema?: Record<string, unknown>;
 	acceptance?: AcceptanceInput;
 	artifacts?: boolean;
 	async: false;
@@ -341,12 +345,14 @@ export function toSubagentDelegationExecutionParams(request: SubagentDelegationR
 		context: request.context,
 		cwd: request.cwd,
 		model: request.model,
+		agentContract: request.agentContract,
 		timeoutMs: request.timeoutMs,
 		turnBudget: request.turnBudget,
 		toolBudget: request.toolBudget,
 		skill: request.skill,
 		output: request.output,
 		outputMode: request.outputMode,
+		outputSchema: request.outputSchema,
 		acceptance: request.acceptance,
 		artifacts: request.artifacts,
 		async: false,
@@ -383,7 +389,7 @@ function resolveSubagentDelegationStatus(
 	if (result.details?.timedOut || child.timedOut) return "timed_out";
 	if (child?.turnBudgetExceeded) return "turn_budget_exhausted";
 	if (child?.toolBudgetBlocked) return "tool_budget_exhausted";
-	if (child?.acceptance?.status === "rejected" && child.acceptance.explicit) return "acceptance_failed";
+	if (child?.acceptance?.status === "rejected" && child.acceptance.explicit && child.agentContract?.version !== 1) return "acceptance_failed";
 	if (result.details?.stopped || child?.stopped || child?.interrupted) return "interrupted";
 	if (result.isError || child?.error || (typeof child?.exitCode === "number" && child.exitCode !== 0)) return "failed";
 	return "completed";
@@ -412,6 +418,7 @@ export function toSubagentDelegationResponse(
 		...(typeof child?.exitCode === "number" ? { exitCode: child.exitCode } : {}),
 		...(child?.finalOutput ? { output: child.finalOutput } : {}),
 		...(child?.savedOutputPath ? { outputPath: child.savedOutputPath } : {}),
+		...(child?.structuredOutput !== undefined ? { structuredOutput: child.structuredOutput } : {}),
 		...(child?.sessionFile ? { sessionFile: child.sessionFile } : {}),
 		...(child?.acceptance ? { acceptance: { status: child.acceptance.status, explicit: child.acceptance.explicit } } : {}),
 		...(typeof child?.usage?.turns === "number" ? { turns: child.usage.turns } : {}),

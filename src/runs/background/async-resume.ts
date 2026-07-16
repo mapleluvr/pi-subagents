@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ASYNC_DIR, RESULTS_DIR, type AsyncStatus, type SteeringRecoveryDescriptor, type SubagentState } from "../../shared/types.ts";
+import { ASYNC_DIR, RESULTS_DIR, type AsyncStatus, type ResolvedAgentContract, type SteeringRecoveryDescriptor, type SubagentState } from "../../shared/types.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
 import type { AgentConfig } from "../../agents/agents.ts";
 import { validateAcceptanceInput } from "../shared/acceptance.ts";
@@ -41,6 +41,7 @@ export type AsyncResumeTarget = {
 	sessionFile?: string;
 	model?: string;
 	thinking?: string;
+	agentContract: ResolvedAgentContract;
 	recoveryDescriptor?: SteeringRecoveryDescriptor;
 };
 
@@ -277,6 +278,16 @@ function validateStatusForResume(status: AsyncStatus | null, source: string): vo
 	if (status.sessionId !== undefined && typeof status.sessionId !== "string") throw new Error(`Invalid async status '${source}': sessionId must be a string.`);
 	if (status.cwd !== undefined && typeof status.cwd !== "string") throw new Error(`Invalid async status '${source}': cwd must be a string.`);
 	if (status.sessionFile !== undefined && typeof status.sessionFile !== "string") throw new Error(`Invalid async status '${source}': sessionFile must be a string.`);
+	if (status.agentContract !== undefined) {
+		if (!status.agentContract || typeof status.agentContract !== "object" || Array.isArray(status.agentContract)) throw new Error(`Invalid async status '${source}': agentContract must be an object.`);
+		const contract = status.agentContract as unknown as Record<string, unknown>;
+		for (const field of Object.keys(contract)) {
+			if (field !== "version" && field !== "source") throw new Error(`Invalid async status '${source}': agentContract.${field} is not supported.`);
+		}
+		if (contract.version === 1 && contract.source !== "call" && contract.source !== "config") throw new Error(`Invalid async status '${source}': v1 agentContract.source must be call or config.`);
+		if (contract.version === "legacy" && contract.source !== "legacy-default") throw new Error(`Invalid async status '${source}': legacy agentContract.source must be legacy-default.`);
+		if (contract.version !== 1 && contract.version !== "legacy") throw new Error(`Invalid async status '${source}': agentContract.version must be 1 or legacy.`);
+	}
 	if (status.steps !== undefined) {
 		if (!Array.isArray(status.steps)) throw new Error(`Invalid async status '${source}': steps must be an array.`);
 		status.steps.forEach((step, index) => {
@@ -305,7 +316,7 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 	const allowedFields = new Set([
 		"version", "sourceRunId", "agent", "sessionFile", "cwd", "model", "fallbackModels", "thinking", "tools", "extensions",
 		"subagentOnlyExtensions", "mcpDirectTools", "systemPrompt", "systemPromptMode", "inheritProjectContext", "inheritSkills", "skills",
-		"skillPath", "agentFilePath", "completionGuard", "memory", "outputPath", "outputMode", "acceptance", "sessionDir", "artifactConfig",
+		"skillPath", "agentFilePath", "completionGuard", "agentContract", "memory", "outputPath", "outputMode", "structuredOutputSchema", "acceptance", "sessionDir", "artifactConfig",
 		"artifactsDir", "maxOutput", "controlConfig", "absoluteDeadlineAt", "initialTurnBudget", "initialToolBudget", "maxSubagentDepth", "share",
 	]);
 	for (const field of Object.keys(parsed)) {
@@ -331,6 +342,23 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 		if (parsed[field] !== undefined && (typeof parsed[field] !== "string" || !(parsed[field] as string).trim())) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${field} must be a non-empty string.`);
 	}
 	if (parsed.completionGuard !== undefined && typeof parsed.completionGuard !== "boolean") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': completionGuard must be a boolean.`);
+	if (parsed.structuredOutputSchema !== undefined && (!parsed.structuredOutputSchema || typeof parsed.structuredOutputSchema !== "object" || Array.isArray(parsed.structuredOutputSchema))) {
+		throw new Error(`Invalid async recovery descriptor '${descriptorPath}': structuredOutputSchema must be a JSON Schema object.`);
+	}
+	if (parsed.agentContract !== undefined) {
+		if (!parsed.agentContract || typeof parsed.agentContract !== "object" || Array.isArray(parsed.agentContract)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': agentContract must be an object.`);
+		const contract = parsed.agentContract as Record<string, unknown>;
+		for (const field of Object.keys(contract)) {
+			if (field !== "version" && field !== "source") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': agentContract.${field} is not supported.`);
+		}
+		if (contract.version === 1) {
+			if (contract.source !== "call" && contract.source !== "config") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': v1 agentContract.source must be call or config.`);
+		} else if (contract.version === "legacy") {
+			if (contract.source !== "legacy-default") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': legacy agentContract.source must be legacy-default.`);
+		} else {
+			throw new Error(`Invalid async recovery descriptor '${descriptorPath}': agentContract.version must be 1 or legacy.`);
+		}
+	}
 	if (parsed.memory !== undefined) {
 		if (!parsed.memory || typeof parsed.memory !== "object" || Array.isArray(parsed.memory)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': memory must be an object.`);
 		const memory = parsed.memory as Record<string, unknown>;
@@ -404,6 +432,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 	validateStatusForResume(status, location.asyncDir ? path.join(location.asyncDir, "status.json") : "status.json");
 	const recoveryDescriptor = readAsyncRecoveryDescriptor(location.asyncDir);
 	const result = location.resultPath ? readResultFile(location.resultPath) : undefined;
+	const agentContract = recoveryDescriptor?.agentContract ?? status?.agentContract ?? { version: "legacy", source: "legacy-default" };
 	const runId = status?.runId ?? result?.runId ?? result?.id ?? location.resolvedId ?? (location.asyncDir ? path.basename(location.asyncDir) : "unknown");
 	if (recoveryDescriptor && recoveryDescriptor.sourceRunId !== runId) throw new Error(`Async run '${runId}' has a recovery descriptor for a different source run.`);
 	const state = status?.state ?? (result ? resultState(result) : undefined);
@@ -434,6 +463,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 					sessionFile: selectedStep.sessionFile ?? status?.sessionFile ?? result?.sessionFile,
 					model: selectedStep.model,
 					thinking: selectedStep.thinking,
+					agentContract,
 					...(recoveryDescriptor ? { recoveryDescriptor } : {}),
 				};
 			}
@@ -459,6 +489,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 				sessionFile: selected.step.sessionFile ?? status?.sessionFile ?? result?.sessionFile,
 				model: selected.step.model,
 				thinking: selected.step.thinking,
+				agentContract,
 				...(recoveryDescriptor ? { recoveryDescriptor } : {}),
 			};
 		}
@@ -493,6 +524,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 		...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
 		...(stepModel ? { model: stepModel } : {}),
 		...(stepThinking ? { thinking: stepThinking } : {}),
+		agentContract,
 		...(recoveryDescriptor ? { recoveryDescriptor } : {}),
 	};
 }

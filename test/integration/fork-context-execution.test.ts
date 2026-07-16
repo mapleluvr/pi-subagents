@@ -5,7 +5,7 @@ import * as path from "node:path";
 import type { MockPi } from "../support/helpers.ts";
 import { createEventBus, createMockPi, createTempDir, events, removeTempDir, tryImport } from "../support/helpers.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
-import { DEFAULT_FORK_PREAMBLE, INTERCOM_DETACH_REQUEST_EVENT, SUBAGENT_ASYNC_STARTED_EVENT } from "../../src/shared/types.ts";
+import { DEFAULT_FORK_PREAMBLE, INTERCOM_DETACH_REQUEST_EVENT, RESULTS_DIR, SUBAGENT_ASYNC_STARTED_EVENT } from "../../src/shared/types.ts";
 
 interface ExecutorModule {
 	createSubagentExecutor?: (...args: unknown[]) => {
@@ -1511,6 +1511,52 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		} finally {
 			console.warn = originalWarn;
 		}
+	});
+
+	it("preserves top-level parallel outputSchema when Clarify switches to background", { skip: !asyncAvailable ? "jiti not available" : undefined }, async () => {
+		mockPi.reset();
+		mockPi.onCall({ output: "first", structuredOutput: { answer: 1 } });
+		mockPi.onCall({ output: "second", structuredOutput: { answer: 2 } });
+		const executor = makeExecutor();
+		const ctx = {
+			...makeCtx(makeSessionManagerRecorder().manager),
+			hasUI: true,
+			ui: {
+				custom: async () => ({
+					confirmed: true,
+					runInBackground: true,
+					templates: ["first", "second"],
+					behaviorOverrides: [{}, {}],
+				}),
+			},
+		};
+		const schema = { type: "object", required: ["answer"], properties: { answer: { type: "number" } } };
+		const result = await executor.execute(
+			"clarify-parallel-schema",
+			{
+				tasks: [
+					{ agent: "echo", task: "first", outputSchema: schema },
+					{ agent: "second", task: "second", outputSchema: schema },
+				],
+				clarify: true,
+			},
+			new AbortController().signal,
+			undefined,
+			ctx,
+		);
+		const asyncId = result.details?.asyncId;
+		assert.ok(asyncId);
+		const resultPath = path.join(RESULTS_DIR, `${asyncId}.json`);
+		const started = Date.now();
+		while (!fs.existsSync(resultPath)) {
+			if (Date.now() - started > 10_000) assert.fail(`Timed out waiting for ${resultPath}`);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
+		assert.equal(payload.success, true, JSON.stringify(payload));
+		const structured = payload.results.map((entry: { structuredOutput?: { answer?: unknown } }) => entry.structuredOutput);
+		assert.equal(structured.every((entry: { answer?: unknown } | undefined) => typeof entry?.answer === "number"), true);
+		assert.equal(new Set(payload.results.map((entry: { structuredOutputPath?: string }) => entry.structuredOutputPath)).size, 2);
 	});
 
 	it("keeps raw goals at fork-wrapped async executor boundaries", { skip: !asyncAvailable ? "jiti not available" : undefined }, async () => {

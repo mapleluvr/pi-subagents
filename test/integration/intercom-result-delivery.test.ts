@@ -639,6 +639,8 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				systemPromptMode: "replace",
 				inheritProjectContext: false,
 				inheritSkills: false,
+				agentContract: { version: 1, source: "call" },
+				acceptance: { verify: [{ id: "resume", command: `${JSON.stringify(process.execPath)} -e "process.exit(0)"` }] },
 				outputMode: "inline",
 				maxSubagentDepth: 1,
 				share: false,
@@ -662,7 +664,11 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			assert.equal(args[args.indexOf("--tools") + 1], "read");
 			assert.equal(args.includes("--system-prompt"), true);
 			assert.equal(args.includes("--append-system-prompt"), false);
-			await waitForFile(path.join(RESULTS_DIR, `${revivedId}.json`));
+			const resultPath = path.join(RESULTS_DIR, `${revivedId}.json`);
+			await waitForFile(resultPath);
+			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
+			assert.deepEqual(payload.agentContract, { version: 1, source: "call" });
+			assert.equal(payload.results[0]?.acceptance?.status, "verified");
 		} finally {
 			fs.rmSync(asyncDir, { recursive: true, force: true });
 		}
@@ -1032,6 +1038,73 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		);
 		assert.match(status.content[0]?.text ?? "", /acceptance: rejected/);
 		assert.match(status.content[0]?.text ?? "", /error: Acceptance rejected/);
+	});
+
+	it("keeps detached v1 acceptance rejection observational in completion and status", async () => {
+		const rejectedReport = [
+			"v1 detached answer",
+			"```acceptance-report",
+			JSON.stringify({
+				criteriaSatisfied: [{ id: "criterion-1", status: "not-satisfied", evidence: "runtime check failed" }],
+			}),
+			"```",
+		].join("\n");
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
+				{ delay: 75, jsonl: [events.assistantMessage(rejectedReport)] },
+			],
+		});
+		const { executor, events: bus, state } = makeExecutor({ agents: [makeAgent("a", { systemPrompt: "Intercom orchestration channel:" })] });
+		let detachEmitted = false;
+		const original = await executor.execute(
+			"foreground-detached-v1-rejected-acceptance",
+			{
+				agent: "a",
+				task: "ask supervisor",
+				agentContract: { version: 1 },
+				acceptance: { level: "checked", criteria: ["Runtime check passes"] },
+			},
+			new AbortController().signal,
+			(update: { details?: { progress?: Array<{ currentTool?: string }> } }) => {
+				if (detachEmitted || !update.details?.progress?.some((entry) => entry.currentTool === "contact_supervisor")) return;
+				detachEmitted = true;
+				bus.emit(INTERCOM_DETACH_REQUEST_EVENT, { requestId: "single-detached-v1-rejected-acceptance" });
+			},
+			makeMinimalCtx(tempDir),
+		);
+		const runId = original.details?.runId;
+		assert.ok(runId);
+		assert.deepEqual(original.details?.results?.[0]?.agentContract, { version: 1, source: "call" });
+		assert.equal(original.details?.results?.[0]?.acceptance?.status, "pending");
+
+		const waited = await waitForSubagents({ id: runId, timeoutMs: 5000 }, undefined, {
+			state: state as never,
+			events: bus,
+			asyncDirRoot: path.join(tempDir, "async-runs"),
+			resultsDir: path.join(tempDir, "results"),
+		});
+		assert.equal(waited.isError, undefined);
+		assert.match(waited.content[0]?.text ?? "", /1 complete/);
+
+		const completion = bus.emitted.find((event) => event.channel === SUBAGENT_FOREGROUND_COMPLETE_EVENT);
+		assert.ok(completion);
+		const payload = completion.payload as { success?: boolean; state?: string; exitCode?: number; summary?: string };
+		assert.equal(payload.success, true);
+		assert.equal(payload.state, "complete");
+		assert.equal(payload.exitCode, 0);
+		assert.match(payload.summary ?? "", /v1 detached answer/);
+
+		const status = await executor.execute(
+			"foreground-detached-v1-rejected-status",
+			{ action: "status", id: runId },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.match(status.content[0]?.text ?? "", /a completed/);
+		assert.match(status.content[0]?.text ?? "", /acceptance: rejected/);
+		assert.doesNotMatch(status.content[0]?.text ?? "", /error: Acceptance rejected/);
 	});
 
 	it("status recovers remembered detached chain output after child exit", async () => {

@@ -411,6 +411,16 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(anyOfBranches(configSchema).some((branch) => branch.type === "object" && branch.additionalProperties === true), true);
 		assert.equal(hasAnyOfType(configSchema, "string"), true);
 
+		const agentContractSchema = SubagentParams?.properties?.agentContract;
+		assert.ok(agentContractSchema, "agentContract schema should exist");
+		assert.equal(agentContractSchema.type, "object");
+		assert.equal(agentContractSchema.additionalProperties, false);
+		assert.deepEqual(agentContractSchema.properties?.version?.enum, [1]);
+		assert.deepEqual(agentContractSchema.required, ["version"]);
+
+		assert.equal((SubagentParams?.properties as Record<string, JsonSchemaNode> | undefined)?.outputSchema?.type, "object");
+		assert.equal((SubagentParams?.properties?.tasks?.items as { properties?: Record<string, JsonSchemaNode> } | undefined)?.properties?.outputSchema?.type, "object");
+
 		const acceptanceSchema = SubagentParams?.properties?.acceptance;
 		assert.ok(acceptanceSchema, "acceptance schema should exist");
 		assert.equal(acceptanceSchema.type, undefined);
@@ -491,6 +501,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			{ chain: [{ parallel: [{ agent: "reviewer", phase: "Review", label: "Security", as: "security", outputSchema: { type: "object" } }] }] },
 			{ chain: [{ parallel: [{ agent: "reviewer", output: "review.md", reads: ["input.md"], skill: "review" }] }] },
 			{ chain: [{ expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 }, parallel: { agent: "reviewer", task: "Review {target.path}", outputSchema: { type: "object" } }, collect: { as: "reviews" } }] },
+			{ agent: "worker", task: "Fix", agentContract: { version: 1 } },
 			{ agent: "worker", task: "Fix", acceptance: false },
 			{ agent: "worker", task: "Fix", timeoutMs: 1000 },
 			{ action: "steer", id: "run-1", message: "focus on tests" },
@@ -521,6 +532,9 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		];
 		const invalidValues = [
 			{ skill: 123 },
+			{ agent: "worker", task: "Fix", agentContract: { version: 2 } },
+			{ agent: "worker", task: "Fix", agentContract: {} },
+			{ agent: "worker", task: "Fix", agentContract: { version: 1, profile: "code" } },
 			{ agent: "worker", task: "Fix", acceptance: "none" },
 			{ skill: [123] },
 			{ output: 123 },

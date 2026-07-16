@@ -96,6 +96,7 @@ interface RunSyncResult {
 	outputReference?: { path: string; bytes: number; lines: number; message: string };
 	outputSaveError?: string;
 	sessionFile?: string;
+	effects?: { fileMutation?: { status?: string; source?: string; message?: string } };
 	acceptance?: {
 		status?: string;
 		verifyRuns?: Array<{ status?: string }>;
@@ -198,6 +199,7 @@ interface ExecutorToolResult {
 	isError?: boolean;
 	details?: {
 		totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
+		results?: Array<{ exitCode?: number; structuredOutput?: unknown }>;
 		asyncId?: string;
 		timeoutMs?: number;
 		turnBudget?: { maxTurns: number; graceTurns: number };
@@ -330,6 +332,22 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(result.isError, undefined);
 		assert.match(result.content[0]?.text ?? "", /single alias finished/);
+	});
+
+	it("supports outputSchema on direct foreground single launches", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "done", structuredOutput: { answer: 42 } });
+		const executor = makeExecutor([makeAgent("worker", { completionGuard: false })]);
+		const result = await executor.execute(
+			"direct-structured",
+			{ agent: "worker", task: "Return a structured answer", outputSchema: { type: "object", required: ["answer"], properties: { answer: { type: "number" } } } },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.equal(result.details?.results?.[0]?.exitCode, 0);
+		assert.deepEqual(result.details?.results?.[0]?.structuredOutput, { answer: 42 });
 	});
 
 	it("rejects string \"none\" acceptance before spawning", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -479,13 +497,16 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	});
 
 	it("allows intentional parallel tasks inside one subagent execution call", async () => {
-		mockPi.onCall({ output: "first parallel result" });
-		mockPi.onCall({ output: "second parallel result" });
+		mockPi.onCall({ output: "first parallel result", structuredOutput: { index: 1 } });
+		mockPi.onCall({ output: "second parallel result", structuredOutput: { index: 2 } });
 		const executor = makeExecutor([makeAgent("echo"), makeAgent("second")]);
 
 		const result = await executor.execute(
 			"parallel",
-			{ tasks: [{ agent: "echo", task: "First task" }, { agent: "second", task: "Second task" }] },
+			{ tasks: [
+				{ agent: "echo", task: "First task", outputSchema: { type: "object", properties: { index: { type: "number" } }, required: ["index"] } },
+				{ agent: "second", task: "Second task", outputSchema: { type: "object", properties: { index: { type: "number" } }, required: ["index"] } },
+			] },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
@@ -493,6 +514,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(result.isError, undefined);
 		assert.equal(mockPi.callCount(), 2);
+		assert.deepEqual(result.details?.results?.map((item) => item.structuredOutput), [{ index: 1 }, { index: 2 }]);
 		assert.deepEqual(result.details?.totalCost, { inputTokens: 200, outputTokens: 100, costUsd: 0.002 });
 	});
 
@@ -576,6 +598,51 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.exitCode, 0);
 		assert.equal(result.progress.status, "completed");
 		assert.equal(result.finalOutput, "Validation report after the patch");
+	});
+
+	it("records explicit v1 CompletionGuard as an observational file-mutation effect", async () => {
+		mockPi.onCall({ output: "analysis completed without repository changes" });
+		mockPi.onCall({ output: "implementation claimed without repository changes" });
+		mockPi.onCall({
+			jsonl: [
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "toolCall", name: "edit", arguments: { path: "src/file.ts", oldText: "a", newText: "b" } }],
+						model: "mock/test-model",
+						stopReason: "toolUse",
+						usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } },
+					},
+				},
+				events.assistantMessage("Applied edit"),
+			],
+		});
+		const agents = [makeAgent("worker"), makeAgent("guarded-worker", { completionGuard: true })];
+
+		const unconstrained = await runSync(tempDir, agents, "worker", "Implement the approved fixes", {
+			runId: "guard-v1-no-effect",
+			agentContract: { version: 1, source: "call" },
+		});
+		assert.equal(unconstrained.exitCode, 0);
+		assert.deepEqual(unconstrained.effects?.fileMutation, { status: "not-requested", source: "agent-completion-guard" });
+
+		const rejected = await runSync(tempDir, agents, "guarded-worker", "Implement the approved fixes", {
+			runId: "guard-v1-rejected-effect",
+			agentContract: { version: 1, source: "call" },
+		});
+		assert.equal(rejected.exitCode, 0);
+		assert.equal(rejected.completionGuardTriggered, undefined);
+		assert.equal(rejected.error, undefined);
+		assert.equal(rejected.effects?.fileMutation.status, "rejected");
+		assert.match(rejected.effects?.fileMutation.message ?? "", /completed without making edits/);
+
+		const satisfied = await runSync(tempDir, agents, "guarded-worker", "Implement the approved fixes", {
+			runId: "guard-v1-satisfied-effect",
+			agentContract: { version: 1, source: "call" },
+		});
+		assert.equal(satisfied.exitCode, 0);
+		assert.deepEqual(satisfied.effects?.fileMutation, { status: "satisfied", source: "agent-completion-guard" });
 	});
 
 	it("keeps bash-enabled implementation tasks conservative unless completion guard is disabled", async () => {
@@ -1587,6 +1654,18 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		);
 		assert.equal(explicit.isError, true);
 		assert.equal(explicit.details?.results?.[0]?.acceptance?.status, "rejected");
+
+		mockPi.onCall({ output: "v1 omission stays omitted" });
+		const v1Omitted = await executor.execute(
+			"agent-acceptance-v1-omitted",
+			{ agent: "echo", task: "Return a concise answer", agentContract: { version: 1 } },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(v1Omitted.isError, undefined);
+		assert.equal(v1Omitted.details?.results?.[0]?.acceptance, undefined);
+		assert.equal(v1Omitted.details?.results?.[0]?.finalOutput, "v1 omission stays omitted");
 	});
 
 	it("lets agent frontmatter override the global async default", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -2227,6 +2306,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		for (let attempt = 0; attempt < 100 && !recoveredResult; attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
 		assert.equal(recoveredResult?.exitCode, 1);
 		assert.equal(recoveredResult?.protocolError?.code, "protocol_output_limit");
+		assert.equal(recoveredResult?.execution?.state, "failed");
 	});
 
 	it("does not save a detached placeholder to an explicit file-only output", async () => {
@@ -2278,6 +2358,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		const result = await runSync(tempDir, agents, "echo", "Task", {
 			runId: "detached-file-only-post-exit-output",
+			agentContract: { version: 1, source: "call" },
 			allowIntercomDetach: true,
 			intercomEvents: eventBus,
 			outputPath,
@@ -2308,6 +2389,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(recoveredResult.progress?.status, "completed");
 		assert.equal(recoveredResult.savedOutputPath, outputPath);
 		assert.equal(recoveredResult.outputSaveError, undefined);
+		assert.equal(recoveredResult.acceptance, undefined);
+		assert.deepEqual(recoveredResult.execution, { state: "completed", exitCode: 0 });
 		assert.match(recoveredResult.finalOutput ?? "", /^Output saved to:/);
 	});
 

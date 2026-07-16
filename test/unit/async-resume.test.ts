@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { buildRevivedAsyncTask, resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
+import { buildRevivedAsyncTask, readAsyncRecoveryDescriptor, resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 
 function writeJson(filePath: string, value: object): void {
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -37,6 +37,7 @@ describe("async resume lookup", () => {
 			assert.equal(target.sessionFile, sessionFile);
 			assert.equal(target.cwd, root);
 			assert.equal(target.intercomTarget, "subagent-worker-run-abc-1");
+			assert.deepEqual(target.agentContract, { version: "legacy", source: "legacy-default" });
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -66,6 +67,30 @@ describe("async resume lookup", () => {
 
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, agent: "another-agent" });
 			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /not 'worker'/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("round-trips and validates resolved generic agent contract provenance", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-contract-"));
+		try {
+			const descriptor = {
+				version: 1, sourceRunId: "run-contract", agent: "worker", cwd: root, systemPromptMode: "replace",
+				inheritProjectContext: false, inheritSkills: false, outputMode: "inline", maxSubagentDepth: 2, share: false,
+				agentContract: { version: 1, source: "call" },
+			};
+			writeJson(path.join(root, "recovery-descriptor.json"), descriptor);
+			assert.deepEqual(readAsyncRecoveryDescriptor(root)?.agentContract, { version: 1, source: "call" });
+
+			writeJson(path.join(root, "recovery-descriptor.json"), { ...descriptor, agentContract: { version: 2, source: "call" } });
+			assert.throws(() => readAsyncRecoveryDescriptor(root), /agentContract\.version must be 1/);
+
+			writeJson(path.join(root, "recovery-descriptor.json"), { ...descriptor, agentContract: { version: "legacy", source: "legacy-default" } });
+			assert.deepEqual(readAsyncRecoveryDescriptor(root)?.agentContract, { version: "legacy", source: "legacy-default" });
+
+			writeJson(path.join(root, "recovery-descriptor.json"), { ...descriptor, agentContract: { version: "legacy", source: "call" } });
+			assert.throws(() => readAsyncRecoveryDescriptor(root), /legacy agentContract\.source must be legacy-default/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -275,6 +300,19 @@ describe("async resume lookup", () => {
 				() => resolveAsyncResumeTarget({ id: "run-status-model" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
 				/steps\[0\].thinking must be a string/,
 			);
+
+			writeJson(path.join(asyncRoot, "run-status-model", "status.json"), {
+				runId: "run-status-model",
+				mode: "single",
+				state: "running",
+				agentContract: { version: "legacy", source: "config" },
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "running" }],
+			});
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "run-status-model" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
+				/legacy agentContract\.source must be legacy-default/,
+			);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -370,6 +408,7 @@ describe("async resume lookup", () => {
 				runId: "run-multi",
 				mode: "chain",
 				state: "complete",
+				agentContract: { version: 1, source: "config" },
 				startedAt: 100,
 				lastUpdate: 200,
 				steps: [
@@ -389,6 +428,7 @@ describe("async resume lookup", () => {
 			assert.equal(target.sessionFile, secondSession);
 			assert.equal(target.model, "anthropic/claude-sonnet-4");
 			assert.equal(target.thinking, "high");
+			assert.deepEqual(target.agentContract, { version: 1, source: "config" });
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

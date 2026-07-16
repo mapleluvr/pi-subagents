@@ -26,12 +26,12 @@
 
 ## Execution Checklist
 
-- [ ] Task 1: Define and resolve the v1 contract
-- [ ] Task 2: Make v1 acceptance explicit, report-optional, and observational
-- [ ] Task 3: Convert CompletionGuard into an explicit v1 effect policy
-- [ ] Task 4: Promote structured output to every launch and delegation surface
-- [ ] Task 5: Align agent-facing guidance and compatibility diagnostics
-- [ ] Task 6: Verify runtime behavior with the requested Pi model
+- [x] Task 1: Define and resolve the v1 contract
+- [x] Task 2: Make v1 acceptance explicit, report-optional, and observational
+- [x] Task 3: Convert CompletionGuard into an explicit v1 effect policy
+- [x] Task 4: Promote structured output to every launch and delegation surface
+- [x] Task 5: Align agent-facing guidance and compatibility diagnostics
+- [x] Task 6: Verify runtime behavior with the requested Pi model
 - [ ] Task 7: Whole-change review, proposal, and upstream issue
 
 ### Task 1: Define and resolve the v1 contract

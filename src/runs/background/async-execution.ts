@@ -31,8 +31,10 @@ import {
 	type AcceptanceInput,
 	type ArtifactConfig,
 	type Details,
+	type JsonSchemaObject,
 	type MaxOutputConfig,
 	type NestedRouteInfo,
+	type ResolvedAgentContract,
 	type ResolvedControlConfig,
 	type ResolvedTurnBudget,
 	type ResolvedToolBudget,
@@ -144,6 +146,7 @@ interface AsyncChainParams {
 	childIntercomTarget?: (agent: string, index: number) => string | undefined;
 	nestedRoute?: NestedRouteInfo;
 	acceptance?: AcceptanceInput;
+	agentContract?: ResolvedAgentContract;
 	timeoutMs?: number;
 	turnBudget?: ResolvedTurnBudget;
 	toolBudget?: ResolvedToolBudget;
@@ -171,6 +174,7 @@ interface AsyncSingleParams {
 	skills?: string[];
 	output?: string | boolean;
 	outputMode?: "inline" | "file-only";
+	outputSchema?: JsonSchemaObject;
 	outputBaseDir?: string;
 	modelOverride?: string;
 	thinkingOverride?: AgentConfig["thinking"];
@@ -185,6 +189,7 @@ interface AsyncSingleParams {
 	childIntercomTarget?: (agent: string, index: number) => string | undefined;
 	nestedRoute?: NestedRouteInfo;
 	acceptance?: AcceptanceInput;
+	agentContract?: ResolvedAgentContract;
 	timeoutMs?: number;
 	absoluteDeadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
@@ -218,6 +223,7 @@ export interface AsyncRunnerStepBuildParams {
 	asyncDir: string;
 	outputBaseDir?: string;
 	validateOutputBindings?: boolean;
+	agentContract?: ResolvedAgentContract;
 	toolBudget?: ResolvedToolBudget;
 	configToolBudget?: ResolvedToolBudget;
 }
@@ -635,6 +641,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			subagentOnlyExtensions: a.subagentOnlyExtensions,
 			mcpDirectTools: a.mcpDirectTools,
 			completionGuard: a.completionGuard,
+			agentContract: params.agentContract,
 			systemPrompt,
 			systemPromptMode: a.systemPromptMode,
 			inheritProjectContext: a.inheritProjectContext,
@@ -654,9 +661,11 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 				mode: resultMode,
 				async: true,
 				dynamic: false,
+				agentContract: params.agentContract,
 			}),
 			acceptanceInput: s.acceptance,
 			acceptanceRole: a.acceptanceRole,
+			gateOn: s.gateOn,
 			...(s.outputSchema ? { structuredOutputSchema: s.outputSchema } : {}),
 			...(s.outputSchema ? { structuredOutput: createStructuredOutputRuntime(s.outputSchema, path.join(asyncDir, "structured-output")) } : {}),
 			...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
@@ -735,9 +744,11 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 						mode: resultMode,
 						async: true,
 						dynamicGroup: true,
+						agentContract: params.agentContract,
 					}),
 					acceptanceInput: s.acceptance,
 					acceptanceRole: agent.acceptanceRole,
+					gateOn: s.gateOn,
 				};
 			}
 			const staticStep = nextFlatStep();
@@ -843,6 +854,7 @@ export function executeAsyncChain(
 		waitToolEnabled: params.waitToolEnabled,
 		worktreeBaseDir,
 		asyncDir,
+		agentContract: params.agentContract,
 		toolBudget: params.toolBudget,
 		configToolBudget: params.configToolBudget,
 	});
@@ -895,6 +907,7 @@ export function executeAsyncChain(
 				worktreeSetupHookTimeoutMs,
 				worktreeBaseDir,
 				controlConfig,
+				agentContract: params.agentContract,
 				turnBudget: params.turnBudget,
 				toolBudget: params.toolBudget,
 				controlIntercomTarget,
@@ -1010,6 +1023,7 @@ export function executeAsyncChain(
 			workflowGraph,
 			cwd: runnerCwd,
 			asyncDir,
+			agentContract: params.agentContract,
 			...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
 			...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
 			nestedRoute,
@@ -1099,6 +1113,9 @@ export function executeAsyncSingle(
 	const outputMode = params.outputMode ?? "inline";
 	const validationError = validateFileOnlyOutputMode(outputMode, outputPath, `Async single run (${agent})`);
 	if (validationError) return formatAsyncStartError("single", validationError);
+	const structuredOutput = params.outputSchema
+		? createStructuredOutputRuntime(params.outputSchema, path.join(asyncDir, "structured-output"))
+		: undefined;
 	const taskWithOutputInstruction = injectSingleOutputInstruction(task, outputPath, agentConfig);
 	const primaryModel = resolveSubagentModelOverride(
 		params.modelOverride ?? agentConfig.model,
@@ -1125,6 +1142,7 @@ export function executeAsyncSingle(
 		task,
 		mode: "single",
 		async: true,
+		agentContract: params.agentContract,
 	});
 	const recoveryDescriptor: SteeringRecoveryDescriptor = {
 		version: 1,
@@ -1147,10 +1165,12 @@ export function executeAsyncSingle(
 		...(agentConfig.skillPath ? { skillPath: [...agentConfig.skillPath] } : {}),
 		...(agentConfig.filePath ? { agentFilePath: agentConfig.filePath } : {}),
 		...(agentConfig.completionGuard !== undefined ? { completionGuard: agentConfig.completionGuard } : {}),
+		...(params.agentContract ? { agentContract: params.agentContract } : {}),
 		...(agentConfig.memory ? { memory: { ...agentConfig.memory } } : {}),
 		...(outputPath ? { outputPath } : {}),
 		outputMode,
-		...(resolvedAcceptance ? { acceptance: resolvedAcceptance } : {}),
+		...(params.outputSchema ? { structuredOutputSchema: params.outputSchema } : {}),
+		...(params.acceptance !== undefined ? { acceptance: params.acceptance } : {}),
 		...(controlConfig ? { controlConfig } : {}),
 		...(deadlineAt !== undefined ? { absoluteDeadlineAt: deadlineAt } : {}),
 		...(params.turnBudget ? { initialTurnBudget: params.turnBudget } : {}),
@@ -1188,6 +1208,7 @@ export function executeAsyncSingle(
 						subagentOnlyExtensions: agentConfig.subagentOnlyExtensions,
 						mcpDirectTools: agentConfig.mcpDirectTools,
 						completionGuard: agentConfig.completionGuard,
+						agentContract: params.agentContract,
 						systemPrompt,
 						systemPromptMode: agentConfig.systemPromptMode,
 						inheritProjectContext: agentConfig.inheritProjectContext,
@@ -1195,6 +1216,8 @@ export function executeAsyncSingle(
 						skills: resolvedSkills.map((r) => r.name),
 						outputPath,
 						outputMode,
+						...(params.outputSchema ? { structured: true, structuredOutputSchema: params.outputSchema } : {}),
+						...(structuredOutput ? { structuredOutput } : {}),
 						sessionFile,
 						maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agentConfig.maxSubagentDepth),
 						waitToolEnabled: params.waitToolEnabled,
@@ -1218,6 +1241,7 @@ export function executeAsyncSingle(
 				worktreeSetupHookTimeoutMs,
 				worktreeBaseDir,
 				controlConfig,
+				agentContract: params.agentContract,
 				timeoutMs,
 				deadlineAt,
 				turnBudget: params.turnBudget,
@@ -1293,6 +1317,7 @@ export function executeAsyncSingle(
 			goal: (params.goal ?? task).slice(0, 120),
 			cwd: runnerCwd,
 			asyncDir,
+			agentContract: params.agentContract,
 			...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}),
 			...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
 			nestedRoute,

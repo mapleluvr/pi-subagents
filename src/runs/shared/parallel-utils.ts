@@ -22,6 +22,7 @@ export interface RunnerSubagentStep {
 	subagentOnlyExtensions?: string[];
 	mcpDirectTools?: string[];
 	completionGuard?: boolean;
+	agentContract?: import("../../shared/types.ts").ResolvedAgentContract;
 	systemPrompt?: string | null;
 	systemPromptMode?: "append" | "replace";
 	inheritProjectContext: boolean;
@@ -43,6 +44,7 @@ export interface RunnerSubagentStep {
 	effectiveAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
 	acceptanceInput?: import("../../shared/types.ts").AcceptanceInput;
 	acceptanceRole?: import("../../shared/types.ts").AcceptanceRole;
+	gateOn?: "execution" | "acceptance";
 	toolBudget?: import("../../shared/types.ts").ResolvedToolBudget;
 }
 
@@ -66,6 +68,7 @@ export interface DynamicRunnerGroup {
 	effectiveAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
 	acceptanceInput?: import("../../shared/types.ts").AcceptanceInput;
 	acceptanceRole?: import("../../shared/types.ts").AcceptanceRole;
+	gateOn?: "execution" | "acceptance";
 }
 
 export type RunnerStep = RunnerSubagentStep | ParallelStepGroup | DynamicRunnerGroup;

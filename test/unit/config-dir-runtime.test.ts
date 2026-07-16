@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { getConfigDirName, PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveConfigDirName, resolveWatchPath } from "../../src/shared/utils.ts";
+import * as sharedTypes from "../../src/shared/types.ts";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 let previousPackageRootEnv: string | undefined;
@@ -68,6 +69,19 @@ describe("config directory resolution", () => {
 	it("canonicalizes watcher paths and preserves the original path when native realpath fails", () => {
 		assert.equal(resolveWatchPath("C:\\SHORT~1\\watch", () => "C:\\Long Path\\watch"), "C:\\Long Path\\watch");
 		assert.equal(resolveWatchPath("C:\\SHORT~1\\watch", () => { throw new Error("missing"); }), "C:\\SHORT~1\\watch");
+	});
+
+	it("resolves generic agent contract provenance without changing the legacy default", () => {
+		const resolveAgentContract = (sharedTypes as unknown as {
+			resolveAgentContract?: (call?: unknown, config?: unknown) => unknown;
+		}).resolveAgentContract;
+		assert.equal(typeof resolveAgentContract, "function");
+		assert.deepEqual(resolveAgentContract?.(), { version: "legacy", source: "legacy-default" });
+		assert.deepEqual(resolveAgentContract?.(undefined, { version: 1 }), { version: 1, source: "config" });
+		assert.deepEqual(resolveAgentContract?.({ version: 1 }, undefined), { version: 1, source: "call" });
+		assert.deepEqual(resolveAgentContract?.({ version: 1 }, { version: 1 }), { version: 1, source: "call" });
+		assert.throws(() => resolveAgentContract?.({ version: 2 }), /agentContract\.version must be 1/);
+		assert.throws(() => resolveAgentContract?.({ version: 1, profile: "code" }), /agentContract\.profile is not supported/);
 	});
 
 	it("does not runtime-import the coding agent peer from shared utils", () => {

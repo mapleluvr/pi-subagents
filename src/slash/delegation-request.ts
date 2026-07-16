@@ -18,12 +18,14 @@ const supportedFields = new Set([
 	"context",
 	"cwd",
 	"model",
+	"agentContract",
 	"timeoutMs",
 	"turnBudget",
 	"toolBudget",
 	"skill",
 	"output",
 	"outputMode",
+	"outputSchema",
 	"acceptance",
 	"artifacts",
 ]);
@@ -64,6 +66,11 @@ export function parseSubagentDelegationRequest(data: unknown): SubagentDelegatio
 	if (value.model !== undefined && !nonEmptyString(value.model)) {
 		return { ok: false, requestId, error: "model must be a non-empty string when provided." };
 	}
+	if (value.agentContract !== undefined) {
+		if (!value.agentContract || typeof value.agentContract !== "object" || Array.isArray(value.agentContract)) return { ok: false, requestId, error: "agentContract must be { version: 1 }." };
+		const contract = value.agentContract as Record<string, unknown>;
+		if (Object.keys(contract).some((field) => field !== "version") || contract.version !== 1) return { ok: false, requestId, error: "agentContract must be { version: 1 }." };
+	}
 	if (value.timeoutMs !== undefined && (typeof value.timeoutMs !== "number" || !Number.isInteger(value.timeoutMs) || value.timeoutMs < 1)) {
 		return { ok: false, requestId, error: "timeoutMs must be an integer >= 1." };
 	}
@@ -93,6 +100,9 @@ export function parseSubagentDelegationRequest(data: unknown): SubagentDelegatio
 	}
 	if (value.outputMode === "file-only" && !nonEmptyString(value.output)) {
 		return { ok: false, requestId, error: 'outputMode "file-only" requires output to be a non-empty path.' };
+	}
+	if (value.outputSchema !== undefined && (!value.outputSchema || typeof value.outputSchema !== "object" || Array.isArray(value.outputSchema))) {
+		return { ok: false, requestId, error: "outputSchema must be a JSON Schema object." };
 	}
 	const acceptanceErrors = validateAcceptanceInput(value.acceptance);
 	if (acceptanceErrors.length > 0) return { ok: false, requestId, error: acceptanceErrors.join(" ") };
