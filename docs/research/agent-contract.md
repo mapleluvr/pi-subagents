@@ -179,6 +179,7 @@ A worker cannot independently review itself. A review status should be based on 
 10. **Domain features live in versioned, namespaced extensions or reusable profiles.**
 11. **Missing optional fields never fail execution.**
 12. **Persisted artifacts remain inspectable without parsing child prose.**
+13. **No default silently selects a domain profile.** Agent frontmatter and configuration may select a profile only through explicit, documented new-mode policy; names, async mode, task keywords, and generic defaults never infer one.
 
 ## Lessons from external protocols
 
@@ -275,14 +276,18 @@ Minimum runtime-owned semantics:
 - runtime/protocol error details;
 - output content or output references;
 - artifacts and persisted session metadata;
-- optional structured content;
+- optional structured content surfaced by the runtime but owned and produced by the child;
 - separately named acceptance and review results.
+
+Runtime validation and storage do not turn child-produced `structuredOutput` into a runtime-observed fact. Only lifecycle, host errors, configured evaluator results, and directly observed artifact/process metadata carry host authority.
 
 ### Layer 2: child content
 
 Default child output remains normal text plus artifacts. No standard JSON handoff is required.
 
-When a caller needs machine-readable child content, it supplies `outputSchema`. The existing `structured_output` tool validates and stores the value as `structuredOutput`. Today this exists on chain steps, chain-parallel tasks, and dynamic items, but not the direct single-agent call, top-level `tasks[]`, or typed delegation request; the proposed API promotes the same mechanism across those surfaces. Missing or invalid required structured output remains an execution/protocol failure because the child did not satisfy its declared output contract. Acceptance may read that value later, but must not require a second report parser.
+When a caller needs machine-readable child content, it supplies `outputSchema`. The existing `structured_output` tool validates and stores the value as `structuredOutput`. Today this exists on chain steps, chain-parallel tasks, and dynamic items, but not the direct single-agent call, top-level `tasks[]`, or typed delegation request; the proposed API promotes the same mechanism across those surfaces.
+
+`outputSchema` is a structural wire contract: it establishes that required content was emitted in the agreed machine-readable shape. Missing or invalid required structured output remains an execution/protocol failure because the child did not satisfy that declared output contract. It must not be used as a backdoor acceptance gate. Value- or policy-level judgments belong to explicit acceptance criteria, runtime `verify[]`, or independent review. Schemas should stay focused on types, required structure, and bounded protocol states; encoding domain success through patterns, thresholds, or verdict-valued constraints is an anti-pattern because it would make policy failure masquerade as execution failure. Acceptance may read structured output later, but must not require a second report parser.
 
 Example caller-defined result schema for a Lean worker:
 
@@ -450,7 +455,7 @@ lean-proof/1
 read-only-review/1
 ```
 
-A profile expands to caller-visible `outputSchema`, criteria, verify checks, review policy, and extensions. The resolved profile is persisted for audit. No profile is selected merely because a run is async or an agent is named `worker`.
+A profile expands to caller-visible `outputSchema`, criteria, verify checks, review policy, and extensions. The resolved profile is persisted for audit. Profiles are selected explicitly per call or by an explicitly configured, documented new-mode policy. No global `defaultProfile`, agent name, frontmatter role, async mode, or task-keyword heuristic may silently attach a domain profile; that would recreate the retired inference system under a new name.
 
 ## Lifecycle and chain semantics
 
@@ -760,7 +765,7 @@ Rejected. Claims may be useful context, but verification requires runtime observ
 2. Should the API require explicit `observe` versus `gate`? Recommendation: yes; if a transition default is unavoidable, use `observe`.
 3. Which minimal structured-output checks belong in the first redesign? Verify-only/report-optional evaluation is required immediately; rich JSON Pointer assertions can be deferred.
 4. Should reusable profiles be package resources, project config objects, or both?
-5. What URI/namespace convention should extensions use?
+5. Extension namespaces should use reverse-DNS ownership plus an explicit major-version segment, as in `io.github.mapleluvr.pi-subagents.code/1`; the exact registration/discovery mechanism remains open.
 6. How long should legacy auto-inference and exit-code rewriting remain available?
 7. Should reviewer scheduling stay entirely parent-owned, or later support an explicit plugin-managed review step?
 8. How should old dynamic aggregate acceptance reports map to per-child acceptance plus parent aggregation?
@@ -779,7 +784,7 @@ The smallest useful implementation should not begin with profiles or extensions.
 8. define new-mode semantics for agent defaults, `acceptanceRole`, and recovered resolved policies;
 9. keep current behavior and tests under legacy compatibility mode.
 
-This slice resolves the observed Lean/report failure without prematurely designing profiles, extension loading, or a plugin ecosystem.
+This acceptance slice resolves the observed Lean/report failure without prematurely designing profiles, extension loading, or a plugin ecosystem. It is not the complete plugin-wide genericity boundary: `docs/research/coding-agent-first-audit.md` identifies default-on CompletionGuard as an independent code-policy path that can also rewrite successful execution. Implementation planning must treat that audit's Tracks 1 and 2 together as the minimum correctness slice; otherwise acceptance is decoupled while CompletionGuard can still turn domain success into exit code 1.
 
 ## Final recommendation
 
