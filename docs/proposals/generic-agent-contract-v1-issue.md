@@ -75,9 +75,13 @@ Unit and integration tests cover foreground, async, dynamic fanout, detachment, 
 - removing worktrees, watchdog/LSP support, or code-oriented worker/scout roles;
 - shipping domain profiles or a profile registry in the first change.
 
-## Questions
+## Maintainer decisions requested
 
-1. Is an opt-in `agentContract: { version: 1 }` acceptable as the compatibility boundary?
-2. Should `execution`/`review` projections be added immediately, or staged after lifecycle decoupling?
-3. Is `gateOn` best kept on each sequential step, or should the run also support an explicit default?
-4. Would you prefer this split into smaller PRs behind the same v1 flag, or reviewed as one correctness slice so lifecycle consumers cannot temporarily disagree?
+The prototype currently makes these choices:
+
+- `agentContract: { version: 1 }` is the explicit compatibility boundary;
+- `execution` and `review` projections land in the same correctness slice as lifecycle decoupling, so result and status consumers cannot temporarily disagree;
+- `gateOn` is configured per sequential step, with no run-level default;
+- the implementation is presented as one correctness slice. It may be split into reviewable commits or PRs only if v1 remains unexposed until every lifecycle consumer is consistent.
+
+The primary upstream policy decision is whether the opt-in v1 boundary is acceptable. If a run-level `gateOn` default is preferred for ergonomics, it can be added without changing per-step override semantics. For review, I can keep the slice in one PR or split it mechanically while preserving that atomic exposure boundary.
