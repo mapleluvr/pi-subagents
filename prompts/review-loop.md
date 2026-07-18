@@ -6,7 +6,7 @@ Run a parent-orchestrated review loop for the requested work.
 
 Use the `subagent` tool. Keep the parent session as the loop controller and final decision-maker. Child subagents must receive concrete role-specific tasks; they must not run subagents or manage the loop themselves unless the parent intentionally selected an explicit fanout agent whose builtin `tools` includes `subagent` for that assigned fanout.
 
-Default to a maximum of 3 review rounds unless I specify a different cap. Count a review round each time fresh-context reviewers inspect the current diff after a worker pass. Stop early when reviewers find no blockers or fixes worth doing now.
+Continue review rounds until reviewers find no blockers or fixes worth doing now, remaining feedback is optional or deferred, an unapproved product or architecture decision appears, or repeated review produces no new actionable findings. Count a review round each time fresh-context reviewers inspect the current diff after a worker pass. Use a numeric review-round cap only when I explicitly specify one.
 
 If the invocation includes an implementation request, first launch one async `worker` to implement the approved scope. If the current diff is already the target, start with review. The sequence can be launched up front as an async/background chain when the workflow is already clear, or continued as follow-up subagent runs after each async completion. For an initial chain, pass `async: true` so the main chat is unblocked; do not set `clarify: true` unless I explicitly want the foreground clarify UI. Use only one writer against the active worktree at a time unless I explicitly ask for isolated worktrees.
 
@@ -32,10 +32,10 @@ Stop and summarize when one of these is true:
 - reviewers find no blockers or fixes worth doing now;
 - remaining feedback is optional, speculative, or intentionally deferred;
 - reviewers surface an unapproved decision that needs me;
-- the max review-round cap is reached.
+- repeated review produces no new actionable findings.
 
 On completion, inspect the final diff yourself, run or confirm focused validation where appropriate, and summarize the loop: rounds run, fixes applied, validation, remaining deferred items, and why the loop stopped.
 
-Additional target, implementation request, max-iteration cap, or review focus from the slash command invocation:
+Additional target, implementation request, explicit user-supplied review cap, or review focus from the slash command invocation:
 
 $@

@@ -11,6 +11,7 @@ import {
 	FULL_SUBAGENT_TOOL_DESCRIPTION,
 	SUBAGENT_SAFETY_GUIDANCE,
 } from "../../src/extension/tool-description.ts";
+import { registerWaitTool } from "../../src/runs/background/wait-tool.ts";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -43,6 +44,11 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /maxRuntimeMs/i);
 		assert.match(description, /foreground and async\/background runs/i);
 		assert.match(description, /user explicitly requires a hard deadline/i);
+		assert.match(description, /omit timeoutMs\/maxRuntimeMs, turnBudget, and toolBudget by default/i);
+		assert.match(description, /Set timeoutMs\/maxRuntimeMs only when the user explicitly requires a hard deadline/i);
+		assert.match(description, /set turnBudget\/toolBudget only when the user explicitly requires that specific limit/i);
+		assert.match(description, /Do not substitute one finite limit for another/i);
+		assert.doesNotMatch(description, /prefer turnBudget\/toolBudget to bound effort/i);
 		assert.match(description, /agentContract.*version.*1/i);
 		assert.match(description, /outputSchema.*direct single.*tasks/i);
 		assert.match(description, /gateOn.*execution.*acceptance/i);
@@ -104,6 +110,11 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /omission keeps name heuristics/i);
 		assert.match(description, /false or an empty string to clear it/i);
 		assert.match(description, /hard deadline.*explicitly requires/i);
+		assert.match(description, /Omit timeoutMs\/maxRuntimeMs, turnBudget, and toolBudget by default/i);
+		assert.match(description, /Set timeoutMs\/maxRuntimeMs only for a hard deadline the user explicitly requires/i);
+		assert.match(description, /set turnBudget\/toolBudget only when the user explicitly requires the corresponding limit/i);
+		assert.match(description, /Do not substitute one finite limit for another/i);
+		assert.doesNotMatch(description, /prefer turnBudget\/toolBudget to bound effort/i);
 		assert.match(description, /agentContract.*version.*1/i);
 		assert.match(description, /outputSchema.*direct single.*tasks/i);
 		assert.match(description, /gateOn.*acceptance/i);
@@ -114,6 +125,16 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /\{previous\}/);
 		assert.match(description, /parallel:/);
 		assert.match(description, /count:/);
+	});
+
+	it("keeps wait help user-authorized and non-substituting", () => {
+		let description = "";
+		registerWaitTool({ registerTool(tool) { description = tool.description; } } as never, {} as never, true);
+
+		assert.match(description, /wait deadline explicitly requested by the user/i);
+		assert.match(description, /omit it by default/i);
+		assert.match(description, /active work keeps running/i);
+		assert.doesNotMatch(description, /timeoutMs: 600000/);
 	});
 
 	it("renders a custom project description with placeholders and mandatory safety guidance", () => {
@@ -137,6 +158,8 @@ describe("registered subagent tool description", () => {
 		assert.match(description, new RegExp(escapeRegex(agentDir)));
 		assert.match(description, new RegExp(escapeRegex(projectConfigDir)));
 		assert.match(description, /SAFETY-CRITICAL SUBAGENT GUIDANCE/);
+		assert.match(description, /omit timeoutMs\/maxRuntimeMs, turnBudget, and toolBudget by default/i);
+		assert.match(description, /Do not substitute one finite limit for another/i);
 		assert.equal(warnings.length, 0);
 	});
 
@@ -154,6 +177,8 @@ describe("registered subagent tool description", () => {
 
 		assert.match(description, /Custom intro/);
 		assert.match(description, /SAFETY-CRITICAL SUBAGENT GUIDANCE/);
+		assert.match(description, /omit timeoutMs\/maxRuntimeMs, turnBudget, and toolBudget by default/i);
+		assert.match(description, /Do not substitute one finite limit for another/i);
 		assert.match(description, /ordinary child subagents are not orchestrators/i);
 		assert.match(description, /status\.json/);
 	});

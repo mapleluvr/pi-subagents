@@ -83,7 +83,7 @@ const AcceptanceOverride = Type.Unsafe({
 const TurnBudgetOverride = Type.Object({
 	maxTurns: Type.Integer({ minimum: 1 }),
 	graceTurns: Type.Optional(Type.Integer({ minimum: 0 })),
-}, { additionalProperties: false, description: "Optional assistant-turn budget. At maxTurns the child is asked to wrap up; after graceTurns additional assistant turns it is aborted and partial output is returned." });
+}, { additionalProperties: false, description: "Optional user-requested assistant-turn budget. Set only when the user explicitly requires a turn limit; at maxTurns the child is asked to wrap up, and after graceTurns additional assistant turns it is aborted with partial output." });
 
 const ToolBudgetBlock = Type.Unsafe({
 	anyOf: [
@@ -96,7 +96,7 @@ const ToolBudgetOverride = Type.Object({
 	soft: Type.Optional(Type.Integer({ minimum: 1 })),
 	hard: Type.Integer({ minimum: 1 }),
 	block: Type.Optional(ToolBudgetBlock),
-}, { additionalProperties: false, description: "Optional child tool-call budget. soft nudges the child; after hard, block tools (default read/grep/find/ls, or '*' for all tools) are blocked so the child can finalize." });
+}, { additionalProperties: false, description: "Optional user-requested child tool-call budget. Set only when the user explicitly requires a tool limit; soft nudges the child, and after hard the configured tools (default read/grep/find/ls, or '*' for all tools) are blocked so the child can finalize." });
 
 const TaskItem = Type.Object({
 	agent: Type.String(), 
@@ -277,8 +277,8 @@ const SubagentParamsSchema = Type.Object({
 	chainDir: Type.Optional(Type.String({ description: "Persistent chain artifact directory; defaults to user-scoped temp storage." })),
 	async: Type.Optional(Type.Boolean({ description: "Run in background (default: false, or per config)" })),
 	agentContract: Type.Optional(AgentContractOverride),
-	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Optional run-level timeout in ms for foreground and async/background runs. Alias of maxRuntimeMs." })),
-	maxRuntimeMs: Type.Optional(Type.Integer({ minimum: 1, description: "Alias of timeoutMs for optional run-level timeout in foreground and async/background runs." })),
+	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Optional user-requested run-level timeout in ms. Set only when the user explicitly requires a hard deadline; applies to foreground and async/background runs. Alias of maxRuntimeMs." })),
+	maxRuntimeMs: Type.Optional(Type.Integer({ minimum: 1, description: "Alias of timeoutMs for an optional user-requested run-level timeout in foreground and async/background runs. Set only when the user explicitly requires a hard deadline." })),
 	turnBudget: Type.Optional(TurnBudgetOverride),
 	toolBudget: Type.Optional(ToolBudgetOverride),
 	agentScope: Type.Optional(Type.String({ description: "Agent discovery scope: 'user', 'project', or 'both' (default: 'both'; project wins on name collisions)" })),
@@ -318,7 +318,7 @@ const SubagentWaitParamsSchema = Type.Object({
 	})),
 	timeoutMs: Type.Optional(Type.Integer({
 		minimum: 1,
-		description: "Give up waiting after this many milliseconds (the runs keep going regardless). Defaults to 1800000 (30 minutes).",
+		description: "Optional wait deadline explicitly requested by the user, in milliseconds. Omit by default; if it elapses, the runs keep going regardless. Defaults to 1800000 (30 minutes).",
 	})),
 });
 

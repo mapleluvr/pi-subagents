@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { discoverPromptWorkflows, registerPromptWorkflowCommands } from "../../src/slash/prompt-workflows.ts";
 import type { SubagentParamsLike } from "../../src/runs/foreground/subagent-executor.ts";
 
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 function writePrompt(dir: string, name: string, content: string): void {
 	fs.mkdirSync(dir, { recursive: true });
@@ -65,6 +67,18 @@ Project body $1
 		assert.equal(workflow?.description, "Project version");
 		assert.equal(workflow?.agent, "worker");
 		assert.equal(workflow?.model, "openai/gpt-5-mini");
+	});
+
+	it("keeps bundled review-loop guidance user-capped and outcome-based", () => {
+		const skill = fs.readFileSync(path.join(projectRoot, "skills", "pi-subagents", "SKILL.md"), "utf-8");
+		const readme = fs.readFileSync(path.join(projectRoot, "README.md"), "utf-8");
+
+		for (const text of [skill, readme]) {
+			assert.doesNotMatch(text, /until clean or capped/i);
+			assert.match(text, /explicit user-supplied cap is reached/i);
+		}
+		assert.doesNotMatch(skill, /unless the parent or user explicitly sets/i);
+		assert.match(skill, /Do not invent a numeric retrieval or source-count budget unless the user explicitly sets one/i);
 	});
 
 	it("runs a named workflow through native subagent execution", async () => {

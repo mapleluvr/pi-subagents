@@ -122,10 +122,14 @@ function getPropertySchema(schema: JsonSchemaNode | undefined, path: string[]): 
 }
 
 let schemas: Record<string, JsonSchemaNode> = {};
+let RawSubagentParams: JsonSchemaNode = {};
+let RawSubagentWaitParams: JsonSchemaNode = {};
 let SubagentParams: SubagentParamsSchema | undefined;
 let schemasAvailable = true;
 try {
 	schemas = await import("../../src/extension/schemas.ts") as Record<string, JsonSchemaNode>;
+	RawSubagentParams = schemas.SubagentParams;
+	RawSubagentWaitParams = schemas.SubagentWaitParams;
 	SubagentParams = schemas.SubagentParams as SubagentParamsSchema;
 } catch (error) {
 	if (missingPackageName(error) !== "typebox") throw error;
@@ -196,13 +200,26 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(timeoutSchema.minimum, 1);
 		assert.equal(maxRuntimeSchema.minimum, 1);
 		assert.match(String(timeoutSchema.description ?? ""), /foreground and async\/background/i);
+		assert.match(String(timeoutSchema.description ?? ""), /user explicitly requires a hard deadline/i);
 		assert.doesNotMatch(String(timeoutSchema.description ?? ""), /foreground-only/i);
 		assert.match(String(maxRuntimeSchema.description ?? ""), /timeoutMs/i);
 		assert.match(String(maxRuntimeSchema.description ?? ""), /foreground and async\/background/i);
+		assert.match(String(maxRuntimeSchema.description ?? ""), /user explicitly requires a hard deadline/i);
+		const rawTurnBudget = getPropertySchema(RawSubagentParams, ["turnBudget"]);
+		const rawToolBudget = getPropertySchema(RawSubagentParams, ["toolBudget"]);
+		assert.match(String(rawTurnBudget?.description ?? ""), /user explicitly requires a turn limit/i);
+		assert.match(String(rawToolBudget?.description ?? ""), /user explicitly requires a tool limit/i);
+		assert.doesNotMatch(String(rawTurnBudget?.description ?? ""), /caller-requested/i);
+		assert.doesNotMatch(String(rawToolBudget?.description ?? ""), /caller-requested/i);
 		assert.equal(turnBudgetSchema?.properties?.maxTurns?.minimum, 1);
 		assert.equal(turnBudgetSchema?.properties?.graceTurns?.minimum, 0);
 		assert.equal(toolBudgetSchema?.properties?.soft?.minimum, 1);
 		assert.equal(toolBudgetSchema?.properties?.hard?.minimum, 1);
+		const waitTimeout = getPropertySchema(RawSubagentWaitParams, ["timeoutMs"]);
+		assert.match(String(waitTimeout?.description ?? ""), /wait deadline explicitly requested by the user/i);
+		assert.match(String(waitTimeout?.description ?? ""), /Omit by default/i);
+		assert.match(String(waitTimeout?.description ?? ""), /runs keep going regardless/i);
+		assert.doesNotMatch(String(waitTimeout?.description ?? ""), /caller-requested/i);
 	});
 
 	it("includes subagent control fields", () => {

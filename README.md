@@ -313,7 +313,7 @@ The package includes reusable prompt templates for common workflows. You do not 
 | Prompt | Use it for |
 |--------|------------|
 | `/parallel-review` | Launch fresh-context reviewers with distinct angles, then synthesize what to fix. |
-| `/review-loop` | Run parent-controlled worker, reviewer, and fix-worker cycles until clean or capped. |
+| `/review-loop` | Run parent-controlled worker, reviewer, and fix-worker cycles until clean, blocked, or an explicit user-supplied cap is reached. |
 | `/parallel-research` | Combine `researcher` and `scout` for external evidence, local code context, and practical tradeoffs. |
 | `/parallel-context-build` | Run `context-builder` agents in parallel to produce planning handoff context and meta-prompts. |
 | `/parallel-handoff-plan` | Combine external research and `context-builder` passes into an implementation handoff plan and meta-prompt. |
@@ -591,7 +591,7 @@ You can combine them in either order:
 /run reviewer "review this diff" --bg --fork
 ```
 
-Background runs are detached. If the parent agent has other independent work, it should keep working. In an interactive chat, it should normally return control when ready to yield and let Pi deliver the completion notification instead of blocking merely to wait. Use `subagent_wait` when the current request must run to completion in this turn, when a skill cannot return before its work finishes, or in a non-interactive run with no next turn. It returns when the next initially active run or registered provider item finishes or a subagent needs attention; use `subagent_wait({ all: true })` for all work active at call time, `subagent_wait({ id })` for one async or remembered detached foreground run, and `subagent_wait({ timeoutMs })` to cap the block.
+Background runs are detached. If the parent agent has other independent work, it should keep working. In an interactive chat, it should normally return control when ready to yield and let Pi deliver the completion notification instead of blocking merely to wait. Use `subagent_wait` when the current request must run to completion in this turn, when a skill cannot return before its work finishes, or in a non-interactive run with no next turn. It returns when the next initially active run or registered provider item finishes or a subagent needs attention; use `subagent_wait({ all: true })` for all work active at call time, `subagent_wait({ id })` for one async or remembered detached foreground run, and pass `timeoutMs` only when the user explicitly requests a wait deadline. An elapsed wait deadline leaves active work running.
 
 A foreground child can detach while it waits for a supervisor reply. Reply first, then call `subagent_wait({ id: runId })`. The remembered run stays pending until the child exits, then emits a session-scoped completion notification with recovered output and remains inspectable through `subagent({ action: "status", id: runId })`. Do not call `resume` or launch a replacement while the child remains detached.
 
@@ -710,8 +710,6 @@ output: context.md
 defaultReads: context.md
 defaultProgress: true
 async: true
-timeoutMs: 900000
-turnBudget: {"maxTurns":20,"graceTurns":2}
 acceptance: {"level":"none","reason":"lightweight lookup"}
 acceptanceRole: read-only
 completionGuard: false
@@ -743,8 +741,8 @@ Important fields:
 | `defaultReads` | Files to read before running in chain/parallel behavior. |
 | `defaultProgress` | Maintain `progress.md`. |
 | `async` | Default a single-agent launch to background (`true`) or foreground (`false`) when the call omits `async`. Explicit call values and `forceTopLevelAsync` win. |
-| `timeoutMs` | Positive integer default runtime deadline in milliseconds for single-agent launches. An explicit `timeoutMs` or `maxRuntimeMs` wins. |
-| `turnBudget` | JSON object default such as `{"maxTurns":20,"graceTurns":2}` for single-agent launches. An explicit call value wins, followed by this agent default, then global `turnBudget` config. |
+| `timeoutMs` | Optional positive integer runtime deadline for single-agent launches. Set only when the user explicitly requires a hard deadline; an explicit call value wins. |
+| `turnBudget` | Optional assistant-turn limit for single-agent launches. Set only when the user explicitly requires a turn limit; an explicit call value wins, followed by this agent default, then global `turnBudget` config. |
 | `acceptance` | Acceptance default for single-agent launches. Use a scalar level such as `checked` or an inline/block YAML map such as `{ level: "none", reason: "lightweight lookup" }`. Explicit call values win; chain and parallel acceptance remains task/step configuration. |
 | `acceptanceRole` | Optional `read-only` or `writer` role for automatic acceptance inference. Explicit task mutation or no-edit intent wins; otherwise the declared role replaces agent-name guessing. This does not grant or revoke tools. |
 | `completionGuard` | In generic contract v1, set `true` to request observational file-mutation effects. In legacy mode it remains enabled by default; set `false` for non-implementation agents that may mention implementation words while using mutation-capable tools such as `bash`. |
@@ -959,7 +957,7 @@ The package bundles a `pi-subagents` skill that is automatically available to th
 What the bundled skill covers:
 - **Delegation patterns**: when to launch which agent, whether to use single, parallel, chain, or async mode, and whether to use fresh or forked context
 - **Prompt workflow recipes**: how to apply the packaged techniques directly with `subagent(...)` when the user describes the workflow in natural language instead of invoking a slash command. This includes parallel review, review-loop, parallel research, parallel context-build, parallel handoff-plan, gather-context-and-clarify, and parallel cleanup
-- **Role-agent prompting guidance**: compact contract prompts instead of long scripts, what to include in role-specific meta prompts, and retrieval budgets for researchers
+- **Role-agent prompting guidance**: compact contract prompts instead of long scripts, what to include in role-specific meta prompts, and evidence-based retrieval policies for researchers
 - **Safety boundaries**: child agents must not run subagents unless their resolved builtin tools explicitly include `subagent`, must not invent intercom targets, and must escalate unapproved decisions
 - **Intercom conventions**: when to ask vs send, and how parent-side supervisor/result delivery works through the native channel
 - **Control and diagnostics**: attention signals, soft interrupts, status, and the `doctor` action
@@ -991,7 +989,6 @@ const request: SubagentDelegationRequest = {
     properties: { verdict: { type: "string" } },
     required: ["verdict"],
   },
-  toolBudget: { soft: 10, hard: 16, block: "*" },
 };
 
 const unsubscribe = pi.events.on(SUBAGENT_DELEGATION_RESPONSE_EVENT, (payload) => {
@@ -1206,9 +1203,9 @@ Agent definitions are not loaded into context by default. Management actions let
 | `clarify` | boolean | false | Show TUI preview/edit flow. Explicit `clarify: true` keeps the run foreground for the clarify UI. |
 | `agentScope` | `user \| project \| both` | `both` | Agent discovery scope. Project wins on collisions. |
 | `async` | boolean | false | Background execution. For chains, `clarify: true` explicitly keeps the run foreground for the clarify UI. |
-| `timeoutMs` / `maxRuntimeMs` | number | none | Optional hard run-level deadline for foreground and async/background runs. Leave unset unless the user explicitly requires a wall-clock deadline; one value covers the full single, parallel, or chain launch. |
-| `turnBudget` | object | none | Optional assistant-turn budget `{ maxTurns, graceTurns }`. At `maxTurns` the child is warned to wrap up; after `graceTurns` (default 1) more assistant turns the run is aborted and partial output is returned. |
-| `toolBudget` | object | none | Optional child tool-call budget `{ soft?, hard, block? }`. At `soft` the child is nudged to finalize. After `hard`, configured tools are blocked; `block` defaults to `read`, `grep`, `find`, and `ls`, or use `"*"` to block every tool call. Final assistant text is never blocked. |
+| `timeoutMs` / `maxRuntimeMs` | number | none | Optional hard run-level deadline for foreground and async/background runs. Leave unset unless the user explicitly requires a wall-clock deadline; do not substitute a turn/tool budget. One requested value covers the full single, parallel, or chain launch. |
+| `turnBudget` | object | none | Optional user-requested assistant-turn budget `{ maxTurns, graceTurns }`. Set only when the user explicitly requires a turn limit; at the boundary the child may be aborted with partial output. |
+| `toolBudget` | object | none | Optional user-requested child tool-call budget `{ soft?, hard, block? }`. Set only when the user explicitly requires a tool limit; after `hard`, configured tools are blocked. Final assistant text is never blocked. |
 | `cwd` | string | runtime cwd | Override working directory. |
 | `maxOutput` | object | 200KB, 5000 lines | Final output truncation limits. |
 | `artifacts` | boolean | true | Write debug artifacts. |
@@ -1522,7 +1519,7 @@ Legacy runs resolve an inferred acceptance policy. Generic agent contract v1 run
     level: "verified",
     criteria: ["Patch the bug without widening scope"],
     evidence: ["changed-files", "tests-added", "commands-run", "residual-risks", "no-staged-files"],
-    verify: [{ id: "focused", command: "npm test", timeoutMs: 120000 }]
+    verify: [{ id: "focused", command: "npm test" }]
   }
 }
 ```
