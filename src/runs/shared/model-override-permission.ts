@@ -125,6 +125,7 @@ export function resolveModelOverrideRequests(
     input.agents.map((agent) => [agent.name, agent]),
   );
   const requests: ModelOverrideRequest[] = [];
+  const suppressScopeWarning = () => {};
   for (const selector of input.selectors) {
     const agent = agentsByName.get(selector.agent);
     if (!agent)
@@ -137,7 +138,7 @@ export function resolveModelOverrideRequests(
       input.parentModel,
       input.availableModels,
       input.preferredProvider,
-      { scope: input.modelScope },
+      { scope: input.modelScope, onWarn: suppressScopeWarning },
     );
     const requestedResolvedModel = resolveEffectiveSubagentModel(
       selector.requestedModel,
@@ -145,7 +146,7 @@ export function resolveModelOverrideRequests(
       input.parentModel,
       input.availableModels,
       input.preferredProvider,
-      { scope: input.modelScope },
+      { scope: input.modelScope, onWarn: suppressScopeWarning },
     );
     const configuredRuntimeModel = applyThinkingSuffix(
       configuredPrimaryModel,
@@ -165,7 +166,7 @@ export function resolveModelOverrideRequests(
       agent.fallbackModels,
       input.availableModels,
       input.preferredProvider,
-      { scope: input.modelScope },
+      { scope: input.modelScope, onWarn: suppressScopeWarning },
     ).map(
       (candidate) =>
         applyThinkingSuffix(candidate, agent.thinking) ?? candidate,

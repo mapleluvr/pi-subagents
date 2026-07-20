@@ -558,7 +558,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 			],
 			projectAgentsDir: null,
 			modelScope: { enforce: true, allow: ["anthropic/*"] },
-		}));
+		}), { modelOverridePermission: "allow" });
 		const ctx = {
 			...makeCtx(manager),
 			modelRegistry: {
@@ -674,7 +674,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 				{ name: "worker", description: "Worker", defaultContext: "fork", model: "anthropic/claude-sonnet-4-5", thinking: "high" },
 			],
 			projectAgentsDir: null,
-		}));
+		}), { modelOverridePermission: "allow" });
 		const ctx = {
 			...makeCtx(manager),
 			model: { provider: "openai", id: "gpt-5-mini" },
