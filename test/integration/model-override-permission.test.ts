@@ -21,6 +21,7 @@ import { countPendingChainAppendRequests } from "../../src/runs/background/chain
 import { registerSlashSubagentBridge } from "../../src/slash/slash-bridge.ts";
 import { registerPromptTemplateDelegationBridge } from "../../src/slash/prompt-template-bridge.ts";
 import {
+  attachScheduledModelOverrideApproval,
   collectExplicitModelSelectors,
   createScheduledModelOverrideApproval,
   resolveModelOverrideRequests,
@@ -612,6 +613,22 @@ describe(
       assert.equal(result.isError, true);
       assert.match(result.content[0]?.text ?? "", /no UI/i);
       assert.equal(callCount(mockPi), 0);
+    });
+
+    it("preserves scheduler-owned approval through executor normalization", async () => {
+      const approval = scheduledApproval("Mapleluv/claude-sonnet-4-6");
+      const trustedParams = attachScheduledModelOverrideApproval(
+        {
+          agent: "reviewer",
+          task: "Scheduled review",
+          model: "Mapleluv/claude-sonnet-4-6",
+          async: false,
+        },
+        approval,
+      );
+      const result = await execute(trustedParams);
+      assert.equal(result.isError, undefined);
+      assert.equal(callCount(mockPi), 1);
     });
 
     it("rejects an appended model override before writing the append inbox", async () => {

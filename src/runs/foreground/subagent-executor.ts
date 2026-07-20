@@ -3650,6 +3650,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		deps.state.foregroundRuns ??= new Map();
 		deps.state.foregroundControls ??= new Map();
 		deps.state.lastForegroundControlId ??= null;
+		const scheduledModelOverrideApproval = readScheduledModelOverrideApproval(params);
 		const requestParams = omitExecutionModeActionAlias(params);
 		const requestCwd = resolveRequestedCwd(ctx.cwd, requestParams.cwd);
 		const paramsWithResolvedCwd = requestParams.cwd === undefined ? requestParams : { ...requestParams, cwd: requestCwd };
@@ -3990,6 +3991,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		});
 		if (clarification.result) return clarification.result;
 		effectiveParams = clarification.params!;
+		if (scheduledModelOverrideApproval) {
+			effectiveParams = attachScheduledModelOverrideApproval(effectiveParams, scheduledModelOverrideApproval);
+		}
 
 		const modelOverrideAuthorization = await authorizeModelOverrides({
 			params: effectiveParams,
