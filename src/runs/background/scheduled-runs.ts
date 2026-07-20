@@ -218,7 +218,7 @@ function resolveJobById(jobs: ScheduledRunJob[], requestedId: string): Scheduled
 	throw new Error(`Scheduled run '${requestedId}' not found.`);
 }
 
-function sanitizeScheduledParams(params: SubagentParamsLike): { params?: SubagentParamsLike; error?: string } {
+export function sanitizeScheduledParams(params: SubagentParamsLike): { params?: SubagentParamsLike; error?: string } {
 	const hasChain = (params.chain?.length ?? 0) > 0;
 	const hasTasks = (params.tasks?.length ?? 0) > 0;
 	const hasSingle = !hasChain && !hasTasks && Boolean(params.agent);

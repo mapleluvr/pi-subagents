@@ -81,6 +81,21 @@ Project body $1
 		assert.match(skill, /Do not invent a numeric retrieval or source-count budget unless the user explicitly sets one/i);
 	});
 
+	it("keeps Skill and README model routing user-authorized", () => {
+		const skill = fs.readFileSync(path.join(projectRoot, "skills", "pi-subagents", "SKILL.md"), "utf-8");
+		const readme = fs.readFileSync(path.join(projectRoot, "README.md"), "utf-8");
+
+		for (const text of [skill, readme]) {
+			assert.match(text, /configured primary.*fallback.*pre-authorized route/i);
+			assert.match(text, /omit.*per-run model.*unless the user explicitly requests.*exact model/i);
+			assert.match(text, /thinking suffix.*model override permission/i);
+			assert.match(text, /tool failure.*do not.*different model/i);
+			assert.match(text, /headless.*reject/i);
+		}
+		assert.match(readme, /modelOverridePermission.*ask.*deny.*allow/i);
+		assert.doesNotMatch(readme, /Per-run model overrides.*still win/i);
+	});
+
 	it("runs a named workflow through native subagent execution", async () => {
 		writePrompt(path.join(cwd, ".pi", "prompts"), "native-run", `---
 description: Run native prompt

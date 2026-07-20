@@ -98,7 +98,9 @@ const ToolBudgetOverride = Type.Object({
 	block: Type.Optional(ToolBudgetBlock),
 }, { additionalProperties: false, description: "Optional user-requested child tool-call budget. Set only when the user explicitly requires a tool limit; soft nudges the child, and after hard the configured tools (default read/grep/find/ls, or '*' for all tools) are blocked so the child can finalize." });
 
-const TaskItem = Type.Object({
+const MODEL_OVERRIDE_DESCRIPTION = "Omit unless the user explicitly requests this exact per-run model. Otherwise use the configured primary and fallback route. Runtime permission may ask or reject; headless ask rejects. A :thinking suffix is part of the requested override.";
+
+export const TaskItemSchema = Type.Object({
 	agent: Type.String(), 
 	task: Type.String(), 
 	outputSchema: Type.Optional(JsonSchemaObject),
@@ -108,7 +110,7 @@ const TaskItem = Type.Object({
 	outputMode: Type.Optional(OutputModeOverride),
 	reads: Type.Optional(ReadsOverride),
 	progress: Type.Optional(Type.Boolean({ description: "Enable progress.md tracking for this task" })),
-	model: Type.Optional(Type.String({ description: "Override model for this task (e.g. 'google/gemini-3-pro')" })),
+	model: Type.Optional(Type.String({ description: MODEL_OVERRIDE_DESCRIPTION })),
 	skill: Type.Optional(SkillOverride),
 	toolBudget: Type.Optional(ToolBudgetOverride),
 	acceptance: Type.Optional(AcceptanceOverride),
@@ -130,7 +132,7 @@ export const ParallelTaskSchema = Type.Object({
 	reads: Type.Optional(ReadsOverride),
 	progress: Type.Optional(Type.Boolean({ description: "Enable progress.md tracking in {chain_dir}" })),
 	skill: Type.Optional(SkillOverride),
-	model: Type.Optional(Type.String({ description: "Override model for this task" })),
+	model: Type.Optional(Type.String({ description: MODEL_OVERRIDE_DESCRIPTION })),
 	toolBudget: Type.Optional(ToolBudgetOverride),
 	acceptance: Type.Optional(AcceptanceOverride),
 	gateOn: Type.Optional(GateOnOverride),
@@ -159,7 +161,7 @@ export const DynamicParallelTemplateSchema = Type.Object({
 	reads: Type.Optional(ReadsOverride),
 	progress: Type.Optional(Type.Boolean({ description: "Enable progress.md tracking in {chain_dir}" })),
 	skill: Type.Optional(SkillOverride),
-	model: Type.Optional(Type.String({ description: "Override model for this task" })),
+	model: Type.Optional(Type.String({ description: MODEL_OVERRIDE_DESCRIPTION })),
 	toolBudget: Type.Optional(ToolBudgetOverride),
 	acceptance: Type.Optional(AcceptanceOverride),
 	gateOn: Type.Optional(GateOnOverride),
@@ -186,7 +188,7 @@ export const ChainItem = Type.Object({
 	reads: Type.Optional(ReadsOverride),
 	progress: Type.Optional(Type.Boolean({ description: "Enable progress.md tracking in {chain_dir}" })),
 	skill: Type.Optional(SkillOverride),
-	model: Type.Optional(Type.String({ description: "Override model for this step" })),
+	model: Type.Optional(Type.String({ description: MODEL_OVERRIDE_DESCRIPTION })),
 	toolBudget: Type.Optional(ToolBudgetOverride),
 	acceptance: Type.Optional(AcceptanceOverride),
 	gateOn: Type.Optional(GateOnOverride),
@@ -264,7 +266,7 @@ const SubagentParamsSchema = Type.Object({
 		],
 		description: "Agent/chain config for create/update. Object or JSON string; presence of steps creates a chain."
 	})),
-	tasks: Type.Optional(Type.Array(TaskItem, { description: "PARALLEL mode: [{agent, task, count?, output?, outputMode?, reads?, progress?}, ...]" })),
+	tasks: Type.Optional(Type.Array(TaskItemSchema, { description: "PARALLEL mode: [{agent, task, count?, output?, outputMode?, reads?, progress?}, ...]" })),
 	concurrency: Type.Optional(Type.Integer({ minimum: 1, description: "Top-level PARALLEL mode only: max concurrent tasks. Defaults to config.parallel.concurrency or 4." })),
 	worktree: Type.Optional(Type.Boolean({
 		description: "Create isolated git worktrees for parallel tasks; requires clean git state."
@@ -303,7 +305,7 @@ const SubagentParamsSchema = Type.Object({
 	outputMode: Type.Optional(OutputModeOverride),
 	outputSchema: Type.Optional(JsonSchemaObject),
 	skill: Type.Optional(SkillOverride),
-	model: Type.Optional(Type.String({ description: "Override model for single agent (e.g. 'anthropic/claude-sonnet-4')" })),
+	model: Type.Optional(Type.String({ description: MODEL_OVERRIDE_DESCRIPTION })),
 	acceptance: Type.Optional(AcceptanceOverride),
 });
 

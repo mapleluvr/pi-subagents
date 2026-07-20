@@ -45,6 +45,14 @@ Humans often use the slash-command layer instead:
 Prefer the tool when you are writing agent logic. Prefer the slash commands when
 you are guiding a human through an interactive flow.
 
+## Model Routing Authorization
+
+The configured primary and fallback models are the pre-authorized route for each agent. Provider/model failures may advance through that configured route automatically. Omit every per-run model field unless the user explicitly requests that exact model; the parent must not choose a supposedly cheaper, faster, stronger, or more available model on its own. Directly selecting a configured fallback is still a per-run override and still needs approval.
+
+The thinking suffix encoded in a model string (for example, `:high`) is covered by model override permission. With the default `modelOverridePermission: "ask"`, an interactive launch asks once for all overrides in the call, while headless ask rejects. `deny` rejects every per-run override and `allow` is an explicit user-owned pre-authorization that restores legacy behavior. A clarify UI final confirmation counts as approval for that invocation. A human-entered `/run ...[model=...]` expresses the request, and the default runtime ask still confirms the exact route before launch.
+
+A child tool failure is not a provider failure: do not retry with a different model. Recover the same run/session, inspect its status and artifacts, or report the failure. If the configured route itself is exhausted, ask the user before requesting an exact model outside that route. Do not modify persistent agent model, fallback, or thinking configuration unless the user explicitly asks for that configuration change.
+
 ## Generic Agent Contract V1
 
 Use `agentContract: { version: 1 }` when delegation must be domain-neutral and policy must be explicit. Under v1:
@@ -216,9 +224,9 @@ and user/project agents override builtins with the same name.
 | `delegate` | Lightweight generic delegate | inherits default | No fixed output; generic delegated work |
 | `oracle` | Decision-consistency advisory review | inherits default | Advisory review, intercom coordination |
 
-Builtin agents inherit the current Pi default model unless a run, user setting, project setting, or `subagents.defaultModel` overrides `model`. Set `subagents.defaultModel` when subagents should use a different default model than the parent session. Override builtin defaults before copying full agent files when a small tweak is enough.
+Builtin agents inherit the current Pi default model unless user/project settings, agent frontmatter, or `subagents.defaultModel` configure a different route. Set `subagents.defaultModel` when subagents should use a different default model than the parent session. Prefer user-owned persistent agent overrides over copying full agent files when a small route change is intended.
 
-For one run, use inline config:
+When the user explicitly requests an exact model for one run, a human-entered slash command is direct approval:
 
 ```text
 /run reviewer[model=anthropic/claude-sonnet-4] "Review this diff"
@@ -342,7 +350,7 @@ subagent({
   tasks: [
     { agent: "scout", task: "Map auth", output: "auth-context.md", progress: true },
     { agent: "researcher", task: "Research OAuth best practices", output: "oauth-research.md" },
-    { agent: "reviewer", task: "Review auth tests", model: "anthropic/claude-sonnet-4" }
+    { agent: "reviewer", task: "Review auth tests" }
   ],
   concurrency: 3
 })

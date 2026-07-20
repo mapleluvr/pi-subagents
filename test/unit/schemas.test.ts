@@ -190,6 +190,25 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.doesNotMatch(description, /orchestration\./);
 	});
 
+	it("keeps every execution model selector behind explicit user authorization", () => {
+		const modelSchemas = [
+			SubagentParams?.properties?.model,
+			(schemas.TaskItemSchema as JsonSchemaNode | undefined)?.properties?.model,
+			(schemas.ChainItem as JsonSchemaNode | undefined)?.properties?.model,
+			(schemas.ParallelTaskSchema as JsonSchemaNode | undefined)?.properties?.model,
+			(schemas.DynamicParallelTemplateSchema as JsonSchemaNode | undefined)?.properties?.model,
+		];
+		assert.equal(modelSchemas.length, 5);
+		for (const modelSchema of modelSchemas) {
+			assert.ok(modelSchema, "every public launch model selector should exist");
+			const description = String(modelSchema.description ?? "");
+			assert.match(description, /omit unless the user explicitly requests this exact per-run model/i);
+			assert.match(description, /configured primary.*fallback route/i);
+			assert.match(description, /runtime permission.*ask or reject/i);
+			assert.match(description, /thinking suffix/i);
+		}
+	});
+
 	it("includes foreground timeout aliases and turn budget", () => {
 		const timeoutSchema = SubagentParams?.properties?.timeoutMs;
 		const maxRuntimeSchema = SubagentParams?.properties?.maxRuntimeMs;

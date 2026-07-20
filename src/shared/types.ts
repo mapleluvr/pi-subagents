@@ -1279,8 +1279,11 @@ export function shouldGateOnAcceptance(
 	return contract.version === "legacy";
 }
 
+export type ModelOverridePermission = "ask" | "deny" | "allow";
+
 export interface ExtensionConfig {
 	asyncByDefault?: boolean;
+	modelOverridePermission?: ModelOverridePermission;
 	agentContract?: AgentContractConfig;
 	/** Show the above-editor async runs widget. Defaults to true. */
 	asyncWidget?: boolean;

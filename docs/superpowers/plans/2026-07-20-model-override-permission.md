@@ -42,10 +42,10 @@
 
 ## Execution Checklist
 
-- [ ] Task 1: Define the pure model-override permission contract
-- [ ] Task 2: Gate ordinary launches and delegation bridges before side effects
-- [ ] Task 3: Gate resume, append, and scheduled lifecycle paths
-- [ ] Task 4: Align Skill, Tool description, schema, and README
+- [x] Task 1: Define the pure model-override permission contract
+- [x] Task 2: Gate ordinary launches and delegation bridges before side effects
+- [x] Task 3: Gate resume, append, and scheduled lifecycle paths
+- [x] Task 4: Align Skill, Tool description, schema, and README
 - [ ] Task 5: Final verification, real Pi canary, review, local policy activation, and push
 
 ### Task 1: Define the pure model-override permission contract
@@ -290,7 +290,8 @@ git commit -m "docs: enforce user-owned subagent model routing"
 - `npm run test:integration`
 - `npm run test:e2e`
 - `git diff --check`
-- `git diff --name-only 3419ca06ace56b9b4c818ef58f6f74a573c383b2^ -- '*.ts' '*.md' | xargs npx prettier --check`
+- `npx prettier --check src/runs/shared/model-override-permission.ts test/unit/model-override-permission.test.ts test/integration/model-override-permission.test.ts`
+- `git diff --check`
 
 **Runtime canary:**
 
@@ -298,7 +299,7 @@ git commit -m "docs: enforce user-owned subagent model routing"
 - Use configured main/child route `Mapleluv-Main/gpt-5.6-sol-pro` where a provider call is needed.
 - Headless off-route explicit model must return permission denial, zero child results, and no new child session/async artifacts.
 - Model-omitted launch must pass permission preflight and show configured route/fallback provenance; provider instability is reported separately.
-- An explicit temporary canary config `allow` must restore legacy override behavior at preflight without changing user config.
+- A temporary canary config `allow` must restore legacy override behavior at preflight without changing user config; the persistent local policy remains `ask`.
 
 **Evidence record:**
 

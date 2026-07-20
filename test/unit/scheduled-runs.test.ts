@@ -364,6 +364,33 @@ describe("ScheduledRunManager firing", () => {
 		assert.match(status.content[0]!.text, /Async dir: \/tmp\/async-xyz/);
 	});
 
+	it("round-trips private model-override approval provenance into the fired launch", async () => {
+		const harness = freshHarness();
+		const approval = {
+			version: 1,
+			source: "scheduled-user-confirmation",
+			digest: "a".repeat(64),
+		};
+		const created = await harness.manager.handleToolCall({
+			action: "schedule",
+			agent: "scout",
+			task: "review",
+			model: "provider/approved-model",
+			modelOverrideApproval: approval,
+			schedule: "+1m",
+		} as any, harness.ctx);
+		assert.equal(isError(created), false);
+		harness.clock.now += 60_000;
+		harness.timers.fireAll();
+		assert.equal(harness.launches.length, 1);
+		assert.deepEqual(harness.launches[0]!.params.modelOverrideApproval, approval);
+		harness.launches[0]!.resolve({
+			content: [{ type: "text", text: "Async: scout [run-approved]" }],
+			details: { mode: "single", runId: "run-approved", asyncId: "run-approved", asyncDir: "/tmp/run-approved", results: [] },
+		});
+		await flushMicrotasks();
+	});
+
 	it("marks the job failed when launch returns an error result", async () => {
 		const harness = freshHarness();
 		const created = await harness.manager.handleToolCall({ action: "schedule", agent: "scout", task: "x", schedule: "+1m" }, harness.ctx);

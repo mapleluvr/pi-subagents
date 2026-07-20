@@ -16,6 +16,17 @@ import { runSync } from "./execution.ts";
 import { handleWatchdogToolAction, WATCHDOG_TOOL_ACTIONS } from "../../watchdog/tool-actions.ts";
 import type { MainWatchdogRuntime } from "../../watchdog/runtime.ts";
 import { buildModelCandidates, resolveEffectiveSubagentModel, resolveModelCandidate } from "../shared/model-fallback.ts";
+import {
+	collectExplicitModelSelectors,
+	createScheduledModelOverrideApproval,
+	formatModelOverrideConfirmation,
+	formatModelOverrideDenial,
+	resolveModelOverridePermission,
+	resolveModelOverrideRequests,
+	validateScheduledModelOverrideApproval,
+	type ModelOverrideRequest,
+	type ScheduledModelOverrideApproval,
+} from "../shared/model-override-permission.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
 import { aggregateParallelOutputs } from "../shared/parallel-utils.ts";
 import { recordRun } from "../shared/run-history.ts";
@@ -35,7 +46,7 @@ import {
 } from "../../shared/settings.ts";
 import { discoverAvailableSkills, normalizeSkillInput } from "../../agents/skills.ts";
 import { buildAsyncRunnerSteps, executeAsyncChain, executeAsyncSingle, formatAsyncStartedMessage, isAsyncAvailable } from "../background/async-execution.ts";
-import type { ScheduledRunAction } from "../background/scheduled-runs.ts";
+import { sanitizeScheduledParams, type ScheduledRunAction } from "../background/scheduled-runs.ts";
 import { enqueueChainAppendRequest, readPendingChainAppendRequests, runnerStepOutputNames } from "../background/chain-append.ts";
 import { ChainOutputValidationError, validateChainOutputBindingsWithContext } from "../shared/chain-outputs.ts";
 import { validateExecutionAcceptance } from "../shared/acceptance.ts";
@@ -181,6 +192,8 @@ export interface SubagentParamsLike {
 	acceptance?: AcceptanceInput;
 	schedule?: string;
 	scheduleName?: string;
+	/** Private runtime provenance. Not part of the public tool or delegation schemas. */
+	modelOverrideApproval?: ScheduledModelOverrideApproval;
 }
 
 interface ExecutorDeps {
@@ -198,6 +211,19 @@ interface ExecutorDeps {
 	allowMutatingManagementActions?: boolean;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 }
+
+interface ModelOverrideAuthorization {
+	requests: ModelOverrideRequest[];
+	error?: AgentToolResult<Details>;
+}
+
+type ModelOverrideAuthorizer = (input: {
+	params: SubagentParamsLike;
+	agents: AgentConfig[];
+	ctx: ExtensionContext;
+	modelScope?: ModelScopeConfig;
+	clarifyWillAuthorize?: boolean;
+}) => Promise<ModelOverrideAuthorization>;
 
 type ForkSessionFileForTask = (agentName: string, idx?: number, modelOverride?: string) => string | undefined;
 type ForkThinkingOverrideForTask = (agentName: string, idx?: number, modelOverride?: string) => AgentConfig["thinking"] | undefined;
@@ -698,12 +724,13 @@ function duplicateNames(names: string[]): string[] {
 	return [...duplicates];
 }
 
-function appendStepToAsyncChain(input: {
+async function appendStepToAsyncChain(input: {
 	params: SubagentParamsLike;
 	requestCwd: string;
 	ctx: ExtensionContext;
 	deps: ExecutorDeps;
-}): AgentToolResult<Details> {
+	authorizeModelOverrides: ModelOverrideAuthorizer;
+}): Promise<AgentToolResult<Details>> {
 	const targetRunId = input.params.id ?? input.params.runId;
 	if (!targetRunId) {
 		return {
@@ -857,6 +884,14 @@ function appendStepToAsyncChain(input: {
 			details: { mode: "management", results: [] },
 		};
 	}
+
+	const authorization = await input.authorizeModelOverrides({
+		params: input.params,
+		agents,
+		ctx: input.ctx,
+		modelScope: discoveredForAppend.modelScope,
+	});
+	if (authorization.error) return authorization.error;
 
 	try {
 		const result = enqueueChainAppendRequest({
@@ -1050,6 +1085,7 @@ async function resumeAsyncRun(input: {
 	ctx: ExtensionContext;
 	deps: ExecutorDeps;
 	absoluteDeadlineAt?: number;
+	authorizeModelOverrides: ModelOverrideAuthorizer;
 }): Promise<AgentToolResult<Details>> {
 	const followUp = (input.params.message ?? input.params.task ?? "").trim();
 	const attachChain = (input.params.chain?.length ?? 0) > 0 ? input.params.chain as ChainStep[] : undefined;
@@ -1183,6 +1219,25 @@ async function resumeAsyncRun(input: {
 			details: { mode: "management", results: [] },
 		};
 	}
+
+	const recoveredAgentConfig: AgentConfig = {
+		...agentConfig,
+		model: recoveryDescriptor?.model ?? target.model ?? agentConfig.model,
+		fallbackModels: recoveryDescriptor?.fallbackModels ?? agentConfig.fallbackModels,
+	};
+	const authorizationAgents = agents.some((agent) => agent.name === target.agent)
+		? agents.map((agent) => agent.name === target.agent ? recoveredAgentConfig : agent)
+		: [...agents, recoveredAgentConfig];
+	const authorizationParams: SubagentParamsLike = attachChain
+		? input.params
+		: { ...input.params, agent: target.agent, tasks: undefined, chain: undefined };
+	const authorization = await input.authorizeModelOverrides({
+		params: authorizationParams,
+		agents: authorizationAgents,
+		ctx: input.ctx,
+		modelScope,
+	});
+	if (authorization.error) return authorization.error;
 
 	if (attachChain) {
 		if (target.source !== "async") {
@@ -3299,6 +3354,57 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		ctx: ExtensionContext,
 	) => Promise<AgentToolResult<Details>>;
 } {
+	let modelOverrideConfirmationQueue = Promise.resolve();
+
+	const confirmModelOverrides = async (ctx: ExtensionContext, message: string): Promise<boolean> => {
+		if (!ctx.hasUI || typeof ctx.ui.confirm !== "function") return false;
+		const confirmation = modelOverrideConfirmationQueue.then(() =>
+			ctx.ui.confirm("Approve subagent model override?", message),
+		);
+		modelOverrideConfirmationQueue = confirmation.then(() => undefined, () => undefined);
+		return confirmation;
+	};
+
+	const authorizeModelOverrides: ModelOverrideAuthorizer = async (input) => {
+		const policy = resolveModelOverridePermission(deps.config.modelOverridePermission);
+		let requests: ModelOverrideRequest[];
+		try {
+			requests = resolveModelOverrideRequests({
+				selectors: collectExplicitModelSelectors(input.params),
+				agents: input.agents,
+				parentModel: input.ctx.model,
+				availableModels: input.ctx.modelRegistry.getAvailable().map(toModelInfo),
+				preferredProvider: input.ctx.model?.provider,
+				modelScope: input.modelScope,
+			});
+		} catch (error) {
+			return {
+				requests: [],
+				error: buildRequestedModeError(input.params, error instanceof Error ? error.message : String(error)),
+			};
+		}
+		if (policy.error) {
+			return {
+				requests,
+				error: buildRequestedModeError(input.params, `${policy.error}\n${formatModelOverrideDenial(requests, "config-invalid")}`),
+			};
+		}
+		if (requests.length === 0 || policy.permission === "allow") return { requests };
+		if (policy.permission === "deny") {
+			return { requests, error: buildRequestedModeError(input.params, formatModelOverrideDenial(requests, "config-deny")) };
+		}
+		if (validateScheduledModelOverrideApproval(input.params.modelOverrideApproval, requests)) return { requests };
+		if (input.clarifyWillAuthorize && input.ctx.hasUI) return { requests };
+		if (!input.ctx.hasUI || typeof input.ctx.ui.confirm !== "function") {
+			return { requests, error: buildRequestedModeError(input.params, formatModelOverrideDenial(requests, "no-ui")) };
+		}
+		const approved = await confirmModelOverrides(input.ctx, formatModelOverrideConfirmation(requests));
+		if (!approved) {
+			return { requests, error: buildRequestedModeError(input.params, formatModelOverrideDenial(requests, "user-rejected")) };
+		}
+		return { requests };
+	};
+
 	const execute = async (
 		_id: string,
 		params: SubagentParamsLike,
@@ -3400,7 +3506,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				return inspectSubagentStatus(paramsWithResolvedCwd, { state: deps.state, nested: nestedScope, sessionRoots });
 			}
 			if (action === "resume") {
-				return resumeAsyncRun({ params: paramsWithResolvedCwd, requestCwd, ctx, deps });
+				return resumeAsyncRun({ params: paramsWithResolvedCwd, requestCwd, ctx, deps, authorizeModelOverrides });
 			}
 			if (action === "steer") {
 				deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
@@ -3411,7 +3517,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					try {
 						const location = resolveAsyncRunLocation(paramsWithResolvedCwd, ASYNC_DIR, RESULTS_DIR);
 						const runId = location.resolvedId ?? targetRunId ?? path.basename(location.asyncDir ?? paramsWithResolvedCwd.dir);
-						return steerAsyncRun({ state: deps.state, runId, message, index: paramsWithResolvedCwd.index, kill: deps.kill, location, signal, recover: ({ absoluteDeadlineAt, ...limits }) => resumeAsyncRun({ params: { ...limits, action: "resume", id: runId, message }, requestCwd, ctx, deps, absoluteDeadlineAt }) });
+						return steerAsyncRun({ state: deps.state, runId, message, index: paramsWithResolvedCwd.index, kill: deps.kill, location, signal, recover: ({ absoluteDeadlineAt, ...limits }) => resumeAsyncRun({ params: { ...limits, action: "resume", id: runId, message }, requestCwd, ctx, deps, absoluteDeadlineAt, authorizeModelOverrides }) });
 					} catch (error) {
 						const text = error instanceof Error ? error.message : String(error);
 						return { content: [{ type: "text", text }], isError: true, details: { mode: "management", results: [] } };
@@ -3428,10 +3534,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (resolved?.kind === "nested") return steerNestedRun({ target: resolved, message, index: paramsWithResolvedCwd.index, signal });
 				if (resolved?.kind === "foreground") return { content: [{ type: "text", text: "action='steer' currently supports live async Pi child sessions only; use action='interrupt' or action='resume' for foreground runs." }], isError: true, details: { mode: "management", results: [] } };
 				if (resolved?.kind !== "async") return { content: [{ type: "text", text: `No async run found for '${targetRunId}'.` }], isError: true, details: { mode: "management", results: [] } };
-				return steerAsyncRun({ state: deps.state, runId: resolved.id, message, index: paramsWithResolvedCwd.index, kill: deps.kill, location: resolved.location, signal, recover: ({ absoluteDeadlineAt, ...limits }) => resumeAsyncRun({ params: { ...limits, action: "resume", id: resolved!.id, message }, requestCwd, ctx, deps, absoluteDeadlineAt }) });
+				return steerAsyncRun({ state: deps.state, runId: resolved.id, message, index: paramsWithResolvedCwd.index, kill: deps.kill, location: resolved.location, signal, recover: ({ absoluteDeadlineAt, ...limits }) => resumeAsyncRun({ params: { ...limits, action: "resume", id: resolved!.id, message }, requestCwd, ctx, deps, absoluteDeadlineAt, authorizeModelOverrides }) });
 			}
 			if (action === "append-step") {
-				return appendStepToAsyncChain({ params: paramsWithResolvedCwd, requestCwd, ctx, deps });
+				return appendStepToAsyncChain({ params: paramsWithResolvedCwd, requestCwd, ctx, deps, authorizeModelOverrides });
 			}
 			if (action === "schedule" || action === "schedule-list" || action === "schedule-status" || action === "schedule-cancel") {
 				if (!deps.handleScheduledRunAction) {
@@ -3441,7 +3547,28 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						details: { mode: "management", results: [] },
 					};
 				}
-				return deps.handleScheduledRunAction(paramsWithResolvedCwd, ctx);
+				if (action !== "schedule") return deps.handleScheduledRunAction(paramsWithResolvedCwd, ctx);
+				const sanitized = sanitizeScheduledParams(paramsWithResolvedCwd);
+				if (!sanitized.params || sanitized.error) {
+					return {
+						content: [{ type: "text", text: sanitized.error ?? "Invalid scheduled subagent run." }],
+						isError: true,
+						details: { mode: "management", results: [] },
+					};
+				}
+				const scheduledScope = resolveExecutionAgentScope(sanitized.params.agentScope);
+				const scheduledDiscovery = deps.discoverAgents(requestCwd, scheduledScope);
+				const authorization = await authorizeModelOverrides({
+					params: sanitized.params,
+					agents: scheduledDiscovery.agents,
+					ctx,
+					modelScope: scheduledDiscovery.modelScope,
+				});
+				if (authorization.error) return authorization.error;
+				const scheduledParams = authorization.requests.length > 0
+					? { ...paramsWithResolvedCwd, modelOverrideApproval: createScheduledModelOverrideApproval(authorization.requests) }
+					: paramsWithResolvedCwd;
+				return deps.handleScheduledRunAction(scheduledParams, ctx);
 			}
 			if (action === "stop") {
 				const targetRunId = paramsWithResolvedCwd.runId ?? paramsWithResolvedCwd.id;
@@ -3600,10 +3727,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const agents = intercomBridge.active
 			? discoveredAgents.map((agent) => applyIntercomBridgeToAgent(agent, intercomBridge))
 			: discoveredAgents;
-		const runId = randomUUID().slice(0, 8);
 		const inheritedNestedRoute = resolveInheritedNestedRouteFromEnv();
 		const nestedParentAddress = inheritedNestedRoute ? resolveNestedParentAddressFromEnv() : undefined;
-		const nestedRoute = inheritedNestedRoute ?? createNestedRoute(runId);
 		const shareEnabled = effectiveParams.share === true;
 		const hasChain = (effectiveParams.chain?.length ?? 0) > 0;
 		const hasTasks = (effectiveParams.tasks?.length ?? 0) > 0;
@@ -3622,6 +3747,18 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			allowClarifyTaskPrompt,
 		);
 		if (validationError) return validationError;
+
+		const modelOverrideAuthorization = await authorizeModelOverrides({
+			params: effectiveParams,
+			agents: discoveredAgents,
+			ctx,
+			modelScope,
+			clarifyWillAuthorize: effectiveParams.clarify === true,
+		});
+		if (modelOverrideAuthorization.error) return modelOverrideAuthorization.error;
+
+		const runId = randomUUID().slice(0, 8);
+		const nestedRoute = inheritedNestedRoute ?? createNestedRoute(runId);
 
 		let forkSessionFileForIndex: (idx?: number) => string | undefined = () => undefined;
 		let forkThinkingOverrideForIndex: (idx?: number) => AgentConfig["thinking"] | undefined = () => undefined;

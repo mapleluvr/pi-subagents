@@ -119,6 +119,10 @@ A simple rule of thumb: use `scout` before you understand the code, `researcher`
 
 Builtin agents inherit your current Pi default model by default. This keeps new installs from depending on a provider you may not have configured. If you want every subagent without its own model to use a different default, set `subagents.defaultModel`. If you want a role to use a specific model, set an override instead of copying the bundled agent file.
 
+The configured primary and fallback models are the pre-authorized route for an agent. Provider/model failures may advance through that configured route automatically. Omit every per-run model field unless the user explicitly requests that exact model. Directly selecting a configured fallback is still a per-run override. The thinking suffix encoded in a model string (for example, `:high`) is covered by model override permission. The default interactive policy asks once for the invocation, while headless ask rejects.
+
+A child tool failure is not a provider failure: do not retry with a different model. Recover the same run/session or inspect its status and artifacts. If the configured route is exhausted, ask the user before selecting a model outside it. Persistent agent model, fallback, and thinking settings should likewise change only when the user explicitly requests that configuration change.
+
 ```json
 {
   "defaultModel": "deepseek-v4-pro",
@@ -133,7 +137,7 @@ Builtin agents inherit your current Pi default model by default. This keeps new 
 }
 ```
 
-For one run, put the override in the command:
+For one run, a human can request the override in the command. With the default permission policy, Pi confirms the exact route before launch:
 
 ```text
 /run reviewer[model=anthropic/claude-sonnet-4:high] "Review this diff"
@@ -155,7 +159,7 @@ For a persistent override, edit settings. This example pins the reviewer everywh
 }
 ```
 
-Use `~/.pi/agent/settings.json` for a user override or the project config settings file (`.pi/settings.json` in standard Pi) for a project override. `subagents.defaultModel` applies to builtin, package, user, and project agents that do not set `model` in frontmatter. Per-run model overrides and `agentOverrides.<name>.model` still win, and explicit agent frontmatter still wins over the global default. The same `agentOverrides` block can change `tools`, `skills`, inherited context, prompt text, or disable a builtin. Matching user and project agents also receive override fields that their frontmatter leaves unset, so a shared project config agent can keep the persona while local settings choose the model.
+Use `~/.pi/agent/settings.json` for a user override or the project config settings file (`.pi/settings.json` in standard Pi) for a project override. `subagents.defaultModel` applies to builtin, package, user, and project agents that do not set `model` in frontmatter. A permitted per-run model override wins for that invocation; `agentOverrides.<name>.model` and explicit agent frontmatter remain persistent route configuration. The same `agentOverrides` block can change `tools`, `skills`, inherited context, prompt text, or disable a builtin. Matching user and project agents also receive override fields that their frontmatter leaves unset, so a shared project config agent can keep the persona while local settings choose the model.
 
 If your provider rejects model IDs with thinking suffixes, set `subagents.disableThinking: true` in user or project settings. That clears bundled builtin thinking defaults in one place; an explicit higher-precedence `agentOverrides.<name>.thinking` value can opt a role back in.
 
@@ -1302,6 +1306,16 @@ After a worktree parallel step completes, per-agent diff stats are appended to t
 Controls the parent-facing `subagent` tool description registered at startup. `full` is the default. `compact` keeps the execution modes, async/`subagent_wait` guidance, child-safety boundary, management/action split, one-writer review guidance, and artifact/status essentials with less prompt bloat.
 
 `custom` reads `subagent-tool-description.md` from the project config directory, then from `~/.pi/agent/subagent-tool-description.md`. Missing, empty, unreadable, or oversized custom files fall back to the full description. Custom templates may use `{{fullDescription}}`, `{{compactDescription}}`, `{{safetyGuidance}}`, `{{agentDir}}`, and `{{projectConfigDir}}`; the safety guidance is always present so custom prose cannot remove the runtime guardrails. Restart Pi after changing the mode or custom file.
+
+### `modelOverridePermission`
+
+```json
+{ "modelOverridePermission": "ask" }
+```
+
+The `modelOverridePermission` setting accepts `ask`, `deny`, and `allow`; the default is `ask`. It controls per-run `model` selectors on single, top-level parallel, chain, dynamic fanout, append, resume/revive, scheduled, slash, and typed-delegation launches. `ask` displays one aggregated confirmation before any child, worktree, async run, append request, revival lease, or scheduled record is created. In JSON/print/headless mode, `ask` rejects because no trusted UI can confirm. `deny` rejects every effective per-run override without prompting. `allow` is an explicit user-owned global pre-authorization that restores the legacy behavior.
+
+Canonical spellings of the configured primary are no-ops and do not prompt. Directly selecting a configured fallback still prompts because it changes the run primary; automatic fallback after a genuine provider/model failure remains inside the pre-authorized configured route. The thinking suffix (for example, `:high`) is part of the selected model and uses the same model override permission. Scheduled jobs persist a digest-bound approval and validate it again when they fire. Clarify UI final confirmation is reused instead of showing a second permission dialog. Invalid values fail closed. Restart or reload Pi after changing this setting.
 
 ### `asyncByDefault`
 

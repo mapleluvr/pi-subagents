@@ -49,6 +49,11 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /set turnBudget\/toolBudget only when the user explicitly requires that specific limit/i);
 		assert.match(description, /Do not substitute one finite limit for another/i);
 		assert.doesNotMatch(description, /prefer turnBudget\/toolBudget to bound effort/i);
+		assert.match(description, /omit.*per-run model.*unless the user explicitly requests.*exact model/i);
+		assert.match(description, /configured primary.*fallback.*pre-authorized route/i);
+		assert.match(description, /thinking suffix.*model override permission/i);
+		assert.match(description, /tool failure.*do not.*different model/i);
+		assert.match(description, /headless.*reject/i);
 		assert.match(description, /agentContract.*version.*1/i);
 		assert.match(description, /outputSchema.*direct single.*tasks/i);
 		assert.match(description, /gateOn.*execution.*acceptance/i);
@@ -115,6 +120,11 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /set turnBudget\/toolBudget only when the user explicitly requires the corresponding limit/i);
 		assert.match(description, /Do not substitute one finite limit for another/i);
 		assert.doesNotMatch(description, /prefer turnBudget\/toolBudget to bound effort/i);
+		assert.match(description, /omit.*per-run model.*unless the user explicitly requests.*exact model/i);
+		assert.match(description, /configured primary.*fallback.*pre-authorized route/i);
+		assert.match(description, /thinking suffix.*model override permission/i);
+		assert.match(description, /tool failure.*do not.*different model/i);
+		assert.match(description, /headless.*reject/i);
 		assert.match(description, /agentContract.*version.*1/i);
 		assert.match(description, /outputSchema.*direct single.*tasks/i);
 		assert.match(description, /gateOn.*acceptance/i);
@@ -160,6 +170,8 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /SAFETY-CRITICAL SUBAGENT GUIDANCE/);
 		assert.match(description, /omit timeoutMs\/maxRuntimeMs, turnBudget, and toolBudget by default/i);
 		assert.match(description, /Do not substitute one finite limit for another/i);
+		assert.match(description, /omit.*per-run model.*unless the user explicitly requests.*exact model/i);
+		assert.match(description, /headless.*reject/i);
 		assert.equal(warnings.length, 0);
 	});
 

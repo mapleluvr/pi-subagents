@@ -79,7 +79,7 @@ For each model selector it records:
 - configured fallbacks for display;
 - requested canonical effective model.
 
-Canonical comparison reuses existing model resolution, including provider qualification, fuzzy registry matching, inheritance, model scope, and thinking suffixes. The permission layer does not implement a second model resolver.
+Canonical comparison reuses existing model resolution, including provider qualification, fuzzy registry matching, inheritance, model scope, and thinking suffixes. There is no standalone public per-run `thinking` selector; a `model:"provider/id:thinking"` suffix is part of the effective model request. The `watchdog.configure` thinking field is a separate management setting and is outside this launch gate. The permission layer does not implement a second model resolver.
 
 If no effective override exists, execution proceeds without UI. Configured fallback transitions inside child execution also proceed without UI because they are not caller overrides.
 
