@@ -1506,8 +1506,8 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 			);
 			assert.equal(result.isError, undefined);
 			assert.ok(result.details?.asyncId);
-			assert.equal(warnings.length, 2);
-			assert.equal(warnings.every((warning) => warning.includes("outside the configured subagent model scope")), true);
+			assert.equal(warnings.length, 1);
+			assert.match(warnings[0]!, /outside the configured subagent model scope/);
 		} finally {
 			console.warn = originalWarn;
 		}

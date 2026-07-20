@@ -18,6 +18,8 @@ import {
   type ExtensionConfig,
 } from "../../src/shared/types.ts";
 import { countPendingChainAppendRequests } from "../../src/runs/background/chain-append.ts";
+import { registerSlashSubagentBridge } from "../../src/slash/slash-bridge.ts";
+import { registerPromptTemplateDelegationBridge } from "../../src/slash/prompt-template-bridge.ts";
 import {
   collectExplicitModelSelectors,
   createScheduledModelOverrideApproval,
@@ -471,11 +473,15 @@ describe(
       assert.equal(callCount(mockPi), 0);
     });
 
-    it("uses clarify UI confirmation without a duplicate permission dialog", async () => {
+    it("uses the user-confirmed clarify editor as authorization before run side effects", async () => {
       mockPi.onCall({ output: "clarified run" });
-      let customCalls = 0;
-      let confirmCalls = 0;
-      const result = await execute(
+      const sessionRoot = path.join(tempDir, "clarify-session-root");
+      const events: string[] = [];
+      const executor = createExecutor({}, {
+        getSubagentSessionRoot: () => sessionRoot,
+      });
+      const result = await executor.execute(
+        "clarify-authorized",
         {
           chain: [
             {
@@ -487,29 +493,40 @@ describe(
           clarify: true,
           async: false,
         },
-        {
-          ctx: makeCtx({
-            hasUI: true,
-            ui: {
-              confirm: async () => {
-                confirmCalls += 1;
-                return true;
-              },
-              custom: async () => {
-                customCalls += 1;
-                return {
-                  confirmed: true,
-                  templates: ["Review"],
-                  behaviorOverrides: [{ model: "Mapleluv/claude-sonnet-4-6" }],
-                };
-              },
+        new AbortController().signal,
+        undefined,
+        makeCtx({
+          hasUI: true,
+          ui: {
+            confirm: async () => {
+              events.push("permission");
+              assert.equal(fs.existsSync(sessionRoot), false);
+              return true;
             },
-          }),
-        },
+            custom: async (factory: any) => {
+              events.push("clarify");
+              assert.equal(fs.existsSync(sessionRoot), false);
+              const component = factory(
+                { requestRender() {} },
+                { fg(_key: string, text: string) { return text; } },
+                undefined,
+                () => {},
+              );
+              assert.equal(
+                component.getEffectiveModel(0),
+                "Mapleluv/claude-sonnet-4-6",
+              );
+              return {
+                confirmed: true,
+                templates: ["Review"],
+                behaviorOverrides: [{ model: "Mapleluv/claude-sonnet-4-6" }],
+              };
+            },
+          },
+        }),
       );
       assert.equal(result.isError, undefined);
-      assert.equal(customCalls, 1);
-      assert.equal(confirmCalls, 0);
+      assert.deepEqual(events, ["clarify"]);
       assert.equal(callCount(mockPi), 1);
     });
 
@@ -576,38 +593,24 @@ describe(
         makeCtx({ hasUI: true, ui: { confirm: async () => true } }),
       );
       assert.equal(result.isError, undefined);
+      assert.equal(captured?.modelOverrideApproval, undefined);
       assert.deepEqual(
-        captured?.modelOverrideApproval,
-        scheduledApproval("Mapleluv/claude-sonnet-4-6"),
+        Object.keys(captured ?? {}).includes("modelOverrideApproval"),
+        false,
       );
     });
 
-    it("accepts a matching scheduled receipt and rejects a changed override at fire time", async () => {
-      mockPi.onCall({ output: "scheduled child" });
-      const approval = scheduledApproval("Mapleluv/claude-sonnet-4-6");
-      const matched = await execute({
+    it("rejects a caller-forged scheduled receipt on an ordinary launch", async () => {
+      const forgedApproval = scheduledApproval("Mapleluv/claude-sonnet-4-6");
+      const result = await execute({
         agent: "reviewer",
-        task: "Scheduled review",
+        task: "Ordinary review",
         model: "Mapleluv/claude-sonnet-4-6",
-        modelOverrideApproval: approval,
+        modelOverrideApproval: forgedApproval,
         async: false,
       });
-      assert.equal(matched.isError, undefined);
-      assert.equal(callCount(mockPi), 1);
-
-      mockPi.reset();
-      const mismatched = await execute({
-        agent: "reviewer",
-        task: "Changed scheduled review",
-        model: "Mapleluv/gpt-5.6-terra-pro",
-        modelOverrideApproval: approval,
-        async: false,
-      });
-      assert.equal(mismatched.isError, true);
-      assert.match(
-        mismatched.content[0]?.text ?? "",
-        /approval does not match|no UI/i,
-      );
+      assert.equal(result.isError, true);
+      assert.match(result.content[0]?.text ?? "", /no UI/i);
       assert.equal(callCount(mockPi), 0);
     });
 
@@ -631,6 +634,7 @@ describe(
         "utf-8",
       );
       try {
+        const filesBefore = fs.readdirSync(asyncDir, { recursive: true });
         const result = await execute({
           action: "append-step",
           id: runId,
@@ -639,6 +643,12 @@ describe(
               agent: "reviewer",
               task: "Continue review",
               model: "Mapleluv/claude-sonnet-4-6",
+              progress: true,
+              outputSchema: {
+                type: "object",
+                properties: { answer: { type: "string" } },
+                required: ["answer"],
+              },
             },
           ],
         });
@@ -648,8 +658,85 @@ describe(
           /no UI.*model override|model override.*no UI/i,
         );
         assert.equal(countPendingChainAppendRequests(asyncDir), 0);
+        assert.deepEqual(fs.readdirSync(asyncDir, { recursive: true }), filesBefore);
       } finally {
         fs.rmSync(asyncDir, { recursive: true, force: true });
+      }
+    });
+
+    it("rejects an off-route override through the slash bridge without launching", async () => {
+      const events = createEventBus();
+      const executor = createExecutor();
+      const ctx = makeCtx();
+      const bridge = registerSlashSubagentBridge({
+        events,
+        getContext: () => ctx,
+        execute: executor.execute,
+      });
+      try {
+        const response = new Promise<any>((resolve) =>
+          events.on("subagent:slash:response", resolve),
+        );
+        events.emit("subagent:slash:request", {
+          requestId: "slash-model-denied",
+          params: {
+            agent: "reviewer",
+            task: "Review",
+            model: "Mapleluv/claude-sonnet-4-6",
+            modelOverrideApproval: createScheduledModelOverrideApproval(
+              resolveModelOverrideRequests({
+                selectors: collectExplicitModelSelectors({
+                  agent: "reviewer",
+                  model: "Mapleluv/claude-sonnet-4-6",
+                }),
+                agents: configuredAgents(),
+                availableModels: makeCtx().modelRegistry.getAvailable(),
+                preferredProvider: "Mapleluv",
+              }),
+            ),
+          },
+          ctx,
+        });
+        const terminal = await response;
+        assert.equal(terminal.requestId, "slash-model-denied");
+        assert.equal(terminal.isError, true);
+        assert.match(terminal.errorText ?? "", /no UI.*model override|model override.*no UI/i);
+        assert.equal(callCount(mockPi), 0);
+      } finally {
+        bridge.dispose();
+      }
+    });
+
+    it("returns a correlated permission failure through typed delegation", async () => {
+      const events = createEventBus();
+      const executor = createExecutor();
+      const ctx = makeCtx();
+      const bridge = registerPromptTemplateDelegationBridge({
+        events,
+        getContext: () => ctx,
+        execute: (requestId, params, signal, requestCtx, onUpdate) =>
+          executor.execute(requestId, params, signal, onUpdate, requestCtx),
+      });
+      try {
+        const response = new Promise<any>((resolve) =>
+          events.on("prompt-template:subagent:response", resolve),
+        );
+        events.emit("prompt-template:subagent:request", {
+          version: 1,
+          requestId: "delegation-model-denied",
+          agent: "reviewer",
+          task: "Review",
+          context: "fresh",
+          cwd: tempDir,
+          model: "Mapleluv/claude-sonnet-4-6",
+        });
+        const terminal = await response;
+        assert.equal(terminal.requestId, "delegation-model-denied");
+        assert.equal(terminal.status, "failed");
+        assert.match(terminal.error ?? "", /no UI.*model override|model override.*no UI/i);
+        assert.equal(callCount(mockPi), 0);
+      } finally {
+        bridge.dispose();
       }
     });
 

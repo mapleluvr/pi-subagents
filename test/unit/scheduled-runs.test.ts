@@ -14,6 +14,11 @@ import {
 	scheduledRunsEnabled,
 } from "../../src/runs/background/scheduled-runs.ts";
 import type { ExtensionConfig } from "../../src/shared/types.ts";
+import {
+	attachScheduledModelOverrideApproval,
+	readScheduledModelOverrideApproval,
+	type ScheduledModelOverrideApproval,
+} from "../../src/runs/shared/model-override-permission.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 type TimerHandle = number;
@@ -366,24 +371,30 @@ describe("ScheduledRunManager firing", () => {
 
 	it("round-trips private model-override approval provenance into the fired launch", async () => {
 		const harness = freshHarness();
-		const approval = {
+		const approval: ScheduledModelOverrideApproval = {
 			version: 1,
 			source: "scheduled-user-confirmation",
 			digest: "a".repeat(64),
 		};
-		const created = await harness.manager.handleToolCall({
-			action: "schedule",
-			agent: "scout",
-			task: "review",
-			model: "provider/approved-model",
-			modelOverrideApproval: approval,
-			schedule: "+1m",
-		} as any, harness.ctx);
+		const created = await harness.manager.handleToolCall(
+			attachScheduledModelOverrideApproval(
+				{
+					action: "schedule",
+					agent: "scout",
+					task: "review",
+					model: "provider/approved-model",
+					schedule: "+1m",
+				},
+				approval,
+			),
+			harness.ctx,
+		);
 		assert.equal(isError(created), false);
 		harness.clock.now += 60_000;
 		harness.timers.fireAll();
 		assert.equal(harness.launches.length, 1);
-		assert.deepEqual(harness.launches[0]!.params.modelOverrideApproval, approval);
+		assert.deepEqual(readScheduledModelOverrideApproval(harness.launches[0]!.params), approval);
+		assert.equal("modelOverrideApproval" in harness.launches[0]!.params, false);
 		harness.launches[0]!.resolve({
 			content: [{ type: "text", text: "Async: scout [run-approved]" }],
 			details: { mode: "single", runId: "run-approved", asyncId: "run-approved", asyncDir: "/tmp/run-approved", results: [] },

@@ -114,7 +114,7 @@ A top-level `model` supplied alongside tasks or chain is currently non-effective
 
 ## Clarify UI
 
-`clarify: true` with UI is already a user-facing editor that shows the final model selections and requires confirmation. Its confirmed final selections count as authorization for that invocation and do not trigger a second dialog.
+`clarify: true` with UI is a preflight editor that shows the final model selections and requires confirmation before run/session/spawn side effects. Its confirmed final selections count as authorization for that invocation and do not trigger a second dialog. Direct single, parallel, and sequential-chain selectors seed the editor with the exact requested effective model.
 
 If `clarify: true` is requested without UI, it cannot authorize an override. The ordinary `ask` no-UI rule rejects the override.
 
@@ -124,13 +124,13 @@ Recovered model and fallback data belong to the previously authorized run and do
 
 ## Append
 
-An appended step is checked after the target chain and payload are validated, but before writing the append request. All sequential/static/dynamic model fields in the appended step are covered.
+An appended step is checked after the target chain and payload are validated, but before building runner steps, resolving warning-producing fallbacks, creating structured-output/progress files, or writing the append request. All sequential/static/dynamic model fields in the appended step are covered.
 
 ## Scheduled Runs
 
-Authorization occurs when the schedule is created. In `ask` mode, schedule creation requires an available user UI; headless creation fails closed unless user-owned config already says `allow`. An approved scheduled payload stores a private approval receipt containing the canonical override digest. The receipt is not part of the public tool schema.
+Authorization occurs when the schedule is created. In `ask` mode, schedule creation requires an available user UI; headless creation fails closed unless user-owned config already says `allow`. An approved scheduled job stores a scheduler-owned approval receipt containing the canonical override digest. The receipt is separate from public execution params and is not part of the public tool schema.
 
-At fire time the runtime recomputes the override digest. A matching receipt authorizes the stored launch without reopening UI. Missing or mismatched receipts use the current permission mode and fail closed in no-UI execution. Changing the stored model payload therefore cannot accidentally reuse approval for a different override.
+At fire time the scheduler reattaches that receipt through an internal non-JSON channel and the runtime recomputes the override digest. A matching receipt authorizes the stored launch without reopening UI. Tool, slash, RPC, typed-delegation, and ordinary executor payloads cannot assert this provenance. Missing or mismatched receipts use the current permission mode and fail closed in no-UI execution. Changing the stored model payload therefore cannot accidentally reuse approval for a different override.
 
 The receipt is provenance for a user-owned local scheduled-run store, not a cryptographic defense against a local filesystem owner.
 

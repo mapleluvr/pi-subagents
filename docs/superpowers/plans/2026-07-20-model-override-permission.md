@@ -125,7 +125,7 @@
 - Authorize before run id persistence, session directory creation, worktree setup, spawn reservation, async runner creation, or child process launch.
 - Aggregate all effective overrides in one prompt.
 - Concurrent async invocations serialize dialogs and each receives its own decision.
-- `clarify:true` with UI does not double-prompt; its confirmed final model choices are the authorization source.
+- `clarify:true` with UI runs as a side-effect-free preflight, displays the exact requested models, does not double-prompt, and uses its confirmed final model choices as the authorization source.
 - `clarify:true` without UI follows ordinary no-UI rejection.
 - Denial text instructs Main to remove `model`, not to retry another model.
 - Configured fallback execution and tool-failure non-retry tests remain unchanged.
@@ -165,7 +165,7 @@
 
 - Consumes: Task 1 receipt digest and Task 2 executor authorizer.
 - Produces: authorization-aware resume, append, schedule-create, and schedule-fire behavior.
-- Scheduled-run public store version stays 1; receipt is an optional private field inside stored execution params.
+- Scheduled-run public store version stays 1; receipt is optional scheduler-owned job metadata and is reattached through a non-JSON internal channel rather than stored inside public execution params.
 
 **Mutable resources:**
 
@@ -175,8 +175,8 @@
 
 - Resume checks only explicit `params.model`; recovered model/fallback provenance is already authorized.
 - Resume denial precedes revived run creation and lease acquisition.
-- Append denial precedes append inbox mutation.
-- Schedule creation prompts while UI exists; approved payload stores a digest-bound receipt.
+- Append denial precedes runner-step construction, fallback warnings, structured-output/progress file creation, and append inbox mutation.
+- Schedule creation prompts while UI exists; the scheduler stores a digest-bound receipt outside public execution params, and tool/bridge payloads cannot manufacture its trusted provenance.
 - Schedule fire recomputes digest; mismatch or missing receipt follows current policy and no-UI fails closed.
 - Model-free legacy scheduled jobs still fire.
 - `deny` rejects even when UI exists; `allow` needs no receipt.

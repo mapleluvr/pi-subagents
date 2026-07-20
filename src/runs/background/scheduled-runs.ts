@@ -13,6 +13,12 @@ import {
 } from "../../shared/types.ts";
 import type { SubagentParamsLike } from "../foreground/subagent-executor.ts";
 import { validateExecutionAcceptance } from "../shared/acceptance.ts";
+import {
+	attachScheduledModelOverrideApproval,
+	isScheduledModelOverrideApproval,
+	readScheduledModelOverrideApproval,
+	type ScheduledModelOverrideApproval,
+} from "../shared/model-override-permission.ts";
 
 export const SCHEDULED_RUNS_DIR = path.join(TEMP_ROOT_DIR, "scheduled-subagent-runs");
 export const SCHEDULED_RUN_ACTIONS = ["schedule", "schedule-list", "schedule-status", "schedule-cancel"] as const;
@@ -35,6 +41,7 @@ type ScheduledRunJob = {
 	cwd: string;
 	sessionId: string;
 	params: SubagentParamsLike;
+	modelOverrideApproval?: ScheduledModelOverrideApproval;
 	lastRunId?: string;
 	lastAsyncDir?: string;
 	lastError?: string;
@@ -138,6 +145,9 @@ function readStoreData(filePath: string, cwd: string, sessionId: string): Schedu
 		}
 		if (!candidate.state || !validStates.has(candidate.state)) throw new Error(`Scheduled subagent store '${filePath}' job ${index} has invalid state.`);
 		if (!candidate.params || typeof candidate.params !== "object" || Array.isArray(candidate.params)) throw new Error(`Scheduled subagent store '${filePath}' job ${index} has invalid params.`);
+		if (candidate.modelOverrideApproval !== undefined && !isScheduledModelOverrideApproval(candidate.modelOverrideApproval)) {
+			throw new Error(`Scheduled subagent store '${filePath}' job ${index} has an invalid model override approval.`);
+		}
 		jobs.push(candidate as ScheduledRunJob);
 	}
 	return {
@@ -234,6 +244,7 @@ export function sanitizeScheduledParams(params: SubagentParamsLike): { params?: 
 
 	const {
 		action: _action,
+		modelOverrideApproval: _untrustedModelOverrideApproval,
 		id: _id,
 		runId: _runId,
 		dir: _dir,
@@ -244,7 +255,7 @@ export function sanitizeScheduledParams(params: SubagentParamsLike): { params?: 
 		schedule: _schedule,
 		scheduleName: _scheduleName,
 		...executionParams
-	} = params;
+	} = params as SubagentParamsLike & { modelOverrideApproval?: unknown };
 	return { params: { ...executionParams, async: true, clarify: false, context: "fresh" } };
 }
 
@@ -318,6 +329,7 @@ export class ScheduledRunManager {
 		const sessionId = resolveCurrentSessionId(ctx.sessionManager);
 		const scheduleName = params.scheduleName?.trim();
 		const executionParams = sanitized.params!;
+		const modelOverrideApproval = readScheduledModelOverrideApproval(params);
 		const now = this.now();
 		const job: ScheduledRunJob = {
 			id,
@@ -330,6 +342,7 @@ export class ScheduledRunManager {
 			cwd: ctx.cwd,
 			sessionId,
 			params: executionParams,
+			...(modelOverrideApproval ? { modelOverrideApproval } : {}),
 		};
 		store.mutate((data) => {
 			data.jobs.push(job);
@@ -467,7 +480,10 @@ export class ScheduledRunManager {
 		if (!job || job.state !== "running") return;
 		const controller = new AbortController();
 		try {
-			const result = await this.deps.launch(job.params, ctx, controller.signal);
+			const launchParams = job.modelOverrideApproval
+				? attachScheduledModelOverrideApproval(job.params, job.modelOverrideApproval)
+				: job.params;
+			const result = await this.deps.launch(launchParams, ctx, controller.signal);
 			const launchRunId = result.details?.asyncId ?? result.details?.runId;
 			store.mutate((data) => {
 				const stored = data.jobs.find((candidate) => candidate.id === jobId);

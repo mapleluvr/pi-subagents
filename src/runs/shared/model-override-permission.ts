@@ -29,6 +29,10 @@ export interface ScheduledModelOverrideApproval {
   digest: string;
 }
 
+const scheduledModelOverrideApprovalKey: unique symbol = Symbol(
+  "pi-subagents.scheduled-model-override-approval",
+);
+
 export interface ModelOverrideLaunchParams {
   agent?: string;
   model?: string;
@@ -221,9 +225,8 @@ export function createScheduledModelOverrideApproval(
   };
 }
 
-export function validateScheduledModelOverrideApproval(
+export function isScheduledModelOverrideApproval(
   receipt: unknown,
-  requests: ModelOverrideRequest[],
 ): receipt is ScheduledModelOverrideApproval {
   if (!receipt || typeof receipt !== "object" || Array.isArray(receipt))
     return false;
@@ -231,8 +234,40 @@ export function validateScheduledModelOverrideApproval(
   return (
     candidate.version === 1 &&
     candidate.source === "scheduled-user-confirmation" &&
-    /^[a-f0-9]{64}$/.test(candidate.digest ?? "") &&
-    candidate.digest === modelOverrideRequestDigest(requests)
+    /^[a-f0-9]{64}$/.test(candidate.digest ?? "")
+  );
+}
+
+export function attachScheduledModelOverrideApproval<T extends object>(
+  params: T,
+  approval: ScheduledModelOverrideApproval,
+): T {
+  const trustedParams = { ...params };
+  Object.defineProperty(trustedParams, scheduledModelOverrideApprovalKey, {
+    value: approval,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+  return trustedParams;
+}
+
+export function readScheduledModelOverrideApproval(
+  params: object,
+): ScheduledModelOverrideApproval | undefined {
+  const receipt = (params as { [scheduledModelOverrideApprovalKey]?: unknown })[
+    scheduledModelOverrideApprovalKey
+  ];
+  return isScheduledModelOverrideApproval(receipt) ? receipt : undefined;
+}
+
+export function validateScheduledModelOverrideApproval(
+  receipt: unknown,
+  requests: ModelOverrideRequest[],
+): receipt is ScheduledModelOverrideApproval {
+  return (
+    isScheduledModelOverrideApproval(receipt) &&
+    receipt.digest === modelOverrideRequestDigest(requests)
   );
 }
 

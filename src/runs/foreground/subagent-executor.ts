@@ -17,15 +17,16 @@ import { handleWatchdogToolAction, WATCHDOG_TOOL_ACTIONS } from "../../watchdog/
 import type { MainWatchdogRuntime } from "../../watchdog/runtime.ts";
 import { buildModelCandidates, resolveEffectiveSubagentModel, resolveModelCandidate } from "../shared/model-fallback.ts";
 import {
+	attachScheduledModelOverrideApproval,
 	collectExplicitModelSelectors,
 	createScheduledModelOverrideApproval,
 	formatModelOverrideConfirmation,
 	formatModelOverrideDenial,
+	readScheduledModelOverrideApproval,
 	resolveModelOverridePermission,
 	resolveModelOverrideRequests,
 	validateScheduledModelOverrideApproval,
 	type ModelOverrideRequest,
-	type ScheduledModelOverrideApproval,
 } from "../shared/model-override-permission.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
 import { aggregateParallelOutputs } from "../shared/parallel-utils.ts";
@@ -36,6 +37,7 @@ import {
 	getStepAgents,
 	isParallelStep,
 	isDynamicParallelStep,
+	resolveChainTemplates,
 	resolveStepBehavior,
 	suppressProgressForReadOnlyTask,
 	taskDisallowsFileUpdates,
@@ -193,7 +195,6 @@ export interface SubagentParamsLike {
 	schedule?: string;
 	scheduleName?: string;
 	/** Private runtime provenance. Not part of the public tool or delegation schemas. */
-	modelOverrideApproval?: ScheduledModelOverrideApproval;
 }
 
 interface ExecutorDeps {
@@ -222,7 +223,7 @@ type ModelOverrideAuthorizer = (input: {
 	agents: AgentConfig[];
 	ctx: ExtensionContext;
 	modelScope?: ModelScopeConfig;
-	clarifyWillAuthorize?: boolean;
+	approvedByClarify?: boolean;
 }) => Promise<ModelOverrideAuthorization>;
 
 type ForkSessionFileForTask = (agentName: string, idx?: number, modelOverride?: string) => string | undefined;
@@ -832,6 +833,14 @@ async function appendStepToAsyncChain(input: {
 	const discoveredForAppend = input.deps.discoverAgents(input.requestCwd, scope);
 	const agents = discoveredForAppend.agents;
 	const contextPolicy = resolveExplicitContextPolicy(input.params);
+	const authorization = await input.authorizeModelOverrides({
+		params: input.params,
+		agents,
+		ctx: input.ctx,
+		modelScope: discoveredForAppend.modelScope,
+	});
+	if (authorization.error) return authorization.error;
+
 	const chainSkillInput = normalizeSkillInput(input.params.skill);
 	const chainSkills = chainSkillInput === false ? [] : (chainSkillInput ?? []);
 	const asyncCtx = {
@@ -884,14 +893,6 @@ async function appendStepToAsyncChain(input: {
 			details: { mode: "management", results: [] },
 		};
 	}
-
-	const authorization = await input.authorizeModelOverrides({
-		params: input.params,
-		agents,
-		ctx: input.ctx,
-		modelScope: discoveredForAppend.modelScope,
-	});
-	if (authorization.error) return authorization.error;
 
 	try {
 		const result = enqueueChainAppendRequest({
@@ -1966,6 +1967,235 @@ function preflightForkSessionsForStaticTasks(
 		if (shouldForkAgent(contextPolicy, sequential.agent)) sessionFileForTask(sequential.agent, flatIndex, sequential.model);
 		flatIndex++;
 	}
+}
+
+interface ClarifyExecutionPreflightResult {
+	params?: SubagentParamsLike;
+	approvedModelSelection: boolean;
+	result?: AgentToolResult<Details>;
+}
+
+async function clarifyExecutionPreflight(input: {
+	params: SubagentParamsLike;
+	agents: AgentConfig[];
+	ctx: ExtensionContext;
+	effectiveCwd: string;
+}): Promise<ClarifyExecutionPreflightResult> {
+	const { params, agents, ctx, effectiveCwd } = input;
+	if (params.clarify !== true || !ctx.hasUI) {
+		return { params, approvedModelSelection: false };
+	}
+	const hasChain = (params.chain?.length ?? 0) > 0;
+	const hasTasks = (params.tasks?.length ?? 0) > 0;
+	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
+	const currentProvider = ctx.model?.provider;
+	const availableSkills = discoverAvailableSkills(effectiveCwd);
+
+	if (hasChain) {
+		const chain = params.chain!;
+		if (chain.some((step) => isParallelStep(step) || isDynamicParallelStep(step))) {
+			return { params, approvedModelSelection: false };
+		}
+		const steps = chain as SequentialStep[];
+		const agentConfigs: AgentConfig[] = [];
+		for (const step of steps) {
+			const agent = agents.find((candidate) => candidate.name === step.agent);
+			if (!agent) {
+				return {
+					approvedModelSelection: false,
+					result: buildRequestedModeError(params, `Unknown agent: ${step.agent}`),
+				};
+			}
+			agentConfigs.push(agent);
+		}
+		const chainSkillsInput = normalizeSkillInput(params.skill);
+		const chainSkills = chainSkillsInput === false ? [] : (chainSkillsInput ?? []);
+		const stepOverrides: StepOverrides[] = steps.map((step) => ({
+			output: step.output,
+			outputMode: step.outputMode,
+			reads: step.reads,
+			progress: step.progress,
+			skills: normalizeSkillInput(step.skill),
+			model: step.model,
+		}));
+		const behaviors = agentConfigs.map((agent, index) =>
+			resolveStepBehavior(agent, stepOverrides[index]!, chainSkills),
+		);
+		const templates = resolveChainTemplates(chain) as string[];
+		const firstStep = steps[0]!;
+		const originalTask = params.task ?? firstStep.task ?? "";
+		const result = await ctx.ui.custom<ChainClarifyResult>(
+			(tui, theme, _kb, done) =>
+				new ChainClarifyComponent(
+					tui,
+					theme,
+					agentConfigs,
+					templates,
+					originalTask,
+					params.chainDir ? path.resolve(params.chainDir) : getProjectChainRunsDir(effectiveCwd),
+					behaviors,
+					availableModels,
+					currentProvider,
+					availableSkills,
+					done,
+				),
+			{ overlay: true, overlayOptions: { anchor: "center", width: 84, maxHeight: "80%" } },
+		);
+		if (!result?.confirmed) {
+			return {
+				approvedModelSelection: false,
+				result: { content: [{ type: "text", text: "Chain cancelled" }], details: { mode: "chain", results: [] } },
+			};
+		}
+		const updatedChain = steps.map((step, index): SequentialStep => {
+			const override = result.behaviorOverrides[index];
+			return {
+				...step,
+				task: result.templates[index]!,
+				...(override?.model !== undefined ? { model: override.model } : {}),
+				...(override?.output !== undefined ? { output: override.output } : {}),
+				...(override?.outputMode !== undefined ? { outputMode: override.outputMode } : {}),
+				...(override?.reads !== undefined ? { reads: override.reads } : {}),
+				...(override?.progress !== undefined ? { progress: override.progress } : {}),
+				...(override?.skills !== undefined ? { skill: override.skills } : {}),
+			};
+		});
+		return {
+			params: {
+				...params,
+				chain: updatedChain,
+				clarify: false,
+				async: result.runInBackground === true,
+			},
+			approvedModelSelection: true,
+		};
+	}
+
+	if (hasTasks) {
+		const tasks = params.tasks!;
+		const agentConfigs: AgentConfig[] = [];
+		for (const task of tasks) {
+			const agent = agents.find((candidate) => candidate.name === task.agent);
+			if (!agent) {
+				return {
+					approvedModelSelection: false,
+					result: buildRequestedModeError(params, `Unknown agent: ${task.agent}`),
+				};
+			}
+			agentConfigs.push(agent);
+		}
+		const taskSkills = tasks.map((task) => normalizeSkillInput(task.skill));
+		const stepOverrides: StepOverrides[] = tasks.map((task, index) => ({
+			...(task.output !== undefined && task.output !== true ? { output: task.output } : {}),
+			...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
+			...(task.reads !== undefined && task.reads !== true ? { reads: task.reads } : {}),
+			...(task.progress !== undefined ? { progress: task.progress } : {}),
+			...(taskSkills[index] !== undefined ? { skills: taskSkills[index] } : {}),
+			...(task.model !== undefined ? { model: task.model } : {}),
+		}));
+		const behaviors = agentConfigs.map((agent, index) =>
+			resolveStepBehavior(agent, stepOverrides[index]!),
+		);
+		const result = await ctx.ui.custom<ChainClarifyResult>(
+			(tui, theme, _kb, done) =>
+				new ChainClarifyComponent(
+					tui,
+					theme,
+					agentConfigs,
+					tasks.map((task) => task.task),
+					"",
+					undefined,
+					behaviors,
+					availableModels,
+					currentProvider,
+					availableSkills,
+					done,
+					"parallel",
+				),
+			{ overlay: true, overlayOptions: { anchor: "center", width: 84, maxHeight: "80%" } },
+		);
+		if (!result?.confirmed) {
+			return {
+				approvedModelSelection: false,
+				result: { content: [{ type: "text", text: "Cancelled" }], details: { mode: "parallel", results: [] } },
+			};
+		}
+		const updatedTasks = tasks.map((task, index) => {
+			const override = result.behaviorOverrides[index];
+			return {
+				...task,
+				task: result.templates[index]!,
+				...(override?.model !== undefined ? { model: override.model } : {}),
+				...(override?.output !== undefined ? { output: override.output } : {}),
+				...(override?.outputMode !== undefined ? { outputMode: override.outputMode } : {}),
+				...(override?.reads !== undefined ? { reads: override.reads } : {}),
+				...(override?.progress !== undefined ? { progress: override.progress } : {}),
+				...(override?.skills !== undefined ? { skill: override.skills } : {}),
+			};
+		});
+		return {
+			params: {
+				...params,
+				tasks: updatedTasks,
+				clarify: false,
+				async: result.runInBackground === true,
+			},
+			approvedModelSelection: true,
+		};
+	}
+
+	const agent = agents.find((candidate) => candidate.name === params.agent);
+	if (!agent) {
+		return {
+			approvedModelSelection: false,
+			result: buildRequestedModeError(params, `Unknown agent: ${params.agent}`),
+		};
+	}
+	const skills = normalizeSkillInput(params.skill);
+	const rawOutput = params.output !== undefined ? params.output : agent.output;
+	const effectiveOutput = normalizeSingleOutputOverride(rawOutput, agent.output);
+	const behavior = resolveStepBehavior(agent, {
+		output: effectiveOutput,
+		skills,
+		...(params.model !== undefined ? { model: params.model } : {}),
+	});
+	const result = await ctx.ui.custom<ChainClarifyResult>(
+		(tui, theme, _kb, done) =>
+			new ChainClarifyComponent(
+				tui,
+				theme,
+				[agent],
+				[params.task ?? ""],
+				params.task ?? "",
+				undefined,
+				[behavior],
+				availableModels,
+				currentProvider,
+				availableSkills,
+				done,
+				"single",
+			),
+		{ overlay: true, overlayOptions: { anchor: "center", width: 84, maxHeight: "80%" } },
+	);
+	if (!result?.confirmed) {
+		return {
+			approvedModelSelection: false,
+			result: { content: [{ type: "text", text: "Cancelled" }], details: { mode: "single", results: [] } },
+		};
+	}
+	const override = result.behaviorOverrides[0];
+	return {
+		params: {
+			...params,
+			task: result.templates[0]!,
+			...(override?.model !== undefined ? { model: override.model } : {}),
+			...(override?.output !== undefined ? { output: override.output } : {}),
+			...(override?.skills !== undefined ? { skill: override.skills } : {}),
+			clarify: false,
+			async: result.runInBackground === true,
+		},
+		approvedModelSelection: true,
+	};
 }
 
 function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentToolResult<Details> | null {
@@ -3393,8 +3623,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		if (policy.permission === "deny") {
 			return { requests, error: buildRequestedModeError(input.params, formatModelOverrideDenial(requests, "config-deny")) };
 		}
-		if (validateScheduledModelOverrideApproval(input.params.modelOverrideApproval, requests)) return { requests };
-		if (input.clarifyWillAuthorize && input.ctx.hasUI) return { requests };
+		if (input.approvedByClarify) return { requests };
+		if (validateScheduledModelOverrideApproval(readScheduledModelOverrideApproval(input.params), requests)) return { requests };
 		if (!input.ctx.hasUI || typeof input.ctx.ui.confirm !== "function") {
 			return { requests, error: buildRequestedModeError(input.params, formatModelOverrideDenial(requests, "no-ui")) };
 		}
@@ -3566,7 +3796,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				});
 				if (authorization.error) return authorization.error;
 				const scheduledParams = authorization.requests.length > 0
-					? { ...paramsWithResolvedCwd, modelOverrideApproval: createScheduledModelOverrideApproval(authorization.requests) }
+					? attachScheduledModelOverrideApproval(paramsWithResolvedCwd, createScheduledModelOverrideApproval(authorization.requests))
 					: paramsWithResolvedCwd;
 				return deps.handleScheduledRunAction(scheduledParams, ctx);
 			}
@@ -3748,12 +3978,21 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		);
 		if (validationError) return validationError;
 
+		const clarification = await clarifyExecutionPreflight({
+			params: effectiveParams,
+			agents,
+			ctx,
+			effectiveCwd,
+		});
+		if (clarification.result) return clarification.result;
+		effectiveParams = clarification.params!;
+
 		const modelOverrideAuthorization = await authorizeModelOverrides({
 			params: effectiveParams,
 			agents: discoveredAgents,
 			ctx,
 			modelScope,
-			clarifyWillAuthorize: effectiveParams.clarify === true,
+			approvedByClarify: clarification.approvedModelSelection,
 		});
 		if (modelOverrideAuthorization.error) return modelOverrideAuthorization.error;
 

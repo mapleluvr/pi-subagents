@@ -2,10 +2,12 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { AgentConfig } from "../../src/agents/agents.ts";
 import {
+  attachScheduledModelOverrideApproval,
   collectExplicitModelSelectors,
   createScheduledModelOverrideApproval,
   formatModelOverrideConfirmation,
   formatModelOverrideDenial,
+  readScheduledModelOverrideApproval,
   resolveModelOverridePermission,
   resolveModelOverrideRequests,
   validateScheduledModelOverrideApproval,
@@ -248,6 +250,25 @@ describe("model override permission contract", () => {
         requests,
       ),
       false,
+    );
+  });
+
+  it("keeps scheduled approval on a non-enumerable internal channel", () => {
+    const approval = createScheduledModelOverrideApproval(
+      resolve({
+        agent: "reviewer",
+        model: "Mapleluv/claude-sonnet-4-6",
+      }),
+    );
+    const trusted = attachScheduledModelOverrideApproval(
+      { agent: "reviewer", model: "Mapleluv/claude-sonnet-4-6" },
+      approval,
+    );
+    assert.deepEqual(readScheduledModelOverrideApproval(trusted), approval);
+    assert.equal(Object.keys(trusted).includes("modelOverrideApproval"), false);
+    assert.equal(
+      readScheduledModelOverrideApproval({ modelOverrideApproval: approval }),
+      undefined,
     );
   });
 
