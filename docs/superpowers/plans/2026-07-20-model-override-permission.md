@@ -46,7 +46,7 @@
 - [x] Task 2: Gate ordinary launches and delegation bridges before side effects
 - [x] Task 3: Gate resume, append, and scheduled lifecycle paths
 - [x] Task 4: Align Skill, Tool description, schema, and README
-- [ ] Task 5: Final verification, real Pi canary, review, local policy activation, and push
+- [x] Task 5: Final verification, real Pi canary, review, local policy activation, and push
 
 ### Task 1: Define the pure model-override permission contract
 
