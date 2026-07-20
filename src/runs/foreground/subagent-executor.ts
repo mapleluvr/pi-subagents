@@ -3597,10 +3597,20 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 
 	const authorizeModelOverrides: ModelOverrideAuthorizer = async (input) => {
 		const policy = resolveModelOverridePermission(deps.config.modelOverridePermission);
+		const selectors = collectExplicitModelSelectors(input.params);
+		if (policy.error) {
+			return {
+				requests: [],
+				error: buildRequestedModeError(input.params, `${policy.error}\n${formatModelOverrideDenial([], "config-invalid")}`),
+			};
+		}
+		if (selectors.length === 0 || policy.permission === "allow") {
+			return { requests: [] };
+		}
 		let requests: ModelOverrideRequest[];
 		try {
 			requests = resolveModelOverrideRequests({
-				selectors: collectExplicitModelSelectors(input.params),
+				selectors,
 				agents: input.agents,
 				parentModel: input.ctx.model,
 				availableModels: input.ctx.modelRegistry.getAvailable().map(toModelInfo),
@@ -3613,13 +3623,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				error: buildRequestedModeError(input.params, error instanceof Error ? error.message : String(error)),
 			};
 		}
-		if (policy.error) {
-			return {
-				requests,
-				error: buildRequestedModeError(input.params, `${policy.error}\n${formatModelOverrideDenial(requests, "config-invalid")}`),
-			};
-		}
-		if (requests.length === 0 || policy.permission === "allow") return { requests };
+		if (requests.length === 0) return { requests };
 		if (policy.permission === "deny") {
 			return { requests, error: buildRequestedModeError(input.params, formatModelOverrideDenial(requests, "config-deny")) };
 		}
