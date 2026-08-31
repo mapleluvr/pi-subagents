@@ -9,10 +9,17 @@ import type { AgentConfig } from "../agents/agents.ts";
 import type { FSWatcher } from "node:fs";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ModelScopeRule } from "../runs/shared/model-scope.ts";
-import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "../runs/shared/capability-ceiling.ts";
+import type {
+	ResolvedSubagentCapabilityCeiling,
+	SubagentCapabilityAudit,
+} from "../runs/shared/capability-ceiling.ts";
 import type { AuthorityPolicyConfig } from "../policy/authority.ts";
 import type { ThinkingLevel } from "./model-info.ts";
-import type { GlobalMissionIndexRecord, MissionRecord, MissionStoreConfig } from "../missions/types.ts";
+import type {
+	GlobalMissionIndexRecord,
+	MissionRecord,
+	MissionStoreConfig,
+} from "../missions/types.ts";
 import type { ExtensionBindings } from "../runs/shared/extension-bindings.ts";
 import type { WorkflowChildPermitContext } from "./workflow-child-permit.ts";
 
@@ -40,10 +47,24 @@ export interface ChainOutputMapEntry {
 
 export type ChainOutputMap = Record<string, ChainOutputMapEntry>;
 
-export type WorkflowNodeStatus = "pending" | "running" | "completed" | "failed" | "partial" | "paused" | "stopped" | "detached" | "rejected";
+export type WorkflowNodeStatus =
+	| "pending"
+	| "running"
+	| "completed"
+	| "failed"
+	| "partial"
+	| "paused"
+	| "stopped"
+	| "detached"
+	| "rejected";
 
 export type HostStepMonitorKind = "command" | "ci" | "gate";
-export type HostStepState = "pending" | "running" | "done" | "cancelled" | "error";
+export type HostStepState =
+	| "pending"
+	| "running"
+	| "done"
+	| "cancelled"
+	| "error";
 export type HostStepVerdict = "pass" | "fail" | "inconclusive";
 
 export interface HostStepFreshnessV1 {
@@ -76,7 +97,12 @@ export interface HostStepNodeV1 {
 
 export interface WorkflowGraphNode {
 	id: string;
-	kind: "step" | "parallel-group" | "dynamic-parallel-group" | "agent" | "host-step";
+	kind:
+		| "step"
+		| "parallel-group"
+		| "dynamic-parallel-group"
+		| "agent"
+		| "host-step";
 	agent?: string;
 	phase?: string;
 	label: string;
@@ -129,7 +155,10 @@ export interface WorkflowPreflightV1 {
 
 export type WorkflowReceiptState = "complete" | "failed" | "paused" | "stopped";
 
-export type WorkflowTerminalResolution = "settled-awaiting-resume" | "failed-child" | "interrupted-child";
+export type WorkflowTerminalResolution =
+	| "settled-awaiting-resume"
+	| "failed-child"
+	| "interrupted-child";
 
 export interface WorkflowTerminalOutcome {
 	state: "partial";
@@ -178,7 +207,13 @@ export interface WorkflowChildSummaryV1 {
 	parentToolCallId: string;
 	workflowRunId: string;
 	inventoryComplete: boolean;
-	workflowState: "queued" | "running" | "completed" | "failed" | "paused" | "stopped";
+	workflowState:
+		| "queued"
+		| "running"
+		| "completed"
+		| "failed"
+		| "paused"
+		| "stopped";
 	children: Array<{
 		childId: string;
 		runId?: string;
@@ -187,13 +222,24 @@ export interface WorkflowChildSummaryV1 {
 		sessionName?: string;
 		model?: string;
 		thinking?: string;
-		state: "pending" | "running" | "completed" | "failed" | "paused" | "stopped" | "rejected" | "detached";
+		state:
+			| "pending"
+			| "running"
+			| "completed"
+			| "failed"
+			| "paused"
+			| "stopped"
+			| "rejected"
+			| "detached";
 	}>;
 }
 
 type WorkflowReceiptEntryResumability =
 	| { latestRunId: string; resumability: { state: "resumable" } }
-	| { latestRunId?: string; resumability: { state: "not-resumable"; reason: string } };
+	| {
+			latestRunId?: string;
+			resumability: { state: "not-resumable"; reason: string };
+	  };
 
 export type WorkflowReceiptEntry = WorkflowReceiptEntryResumability & {
 	key: string;
@@ -258,7 +304,10 @@ export interface ResolvedToolBudget {
 	block: string[] | "*";
 }
 
-export type ToolBudgetOutcome = "within-budget" | "soft-reached" | "hard-blocked";
+export type ToolBudgetOutcome =
+	| "within-budget"
+	| "soft-reached"
+	| "hard-blocked";
 
 export interface ToolBudgetState extends ResolvedToolBudget {
 	outcome: ToolBudgetOutcome;
@@ -272,7 +321,11 @@ export interface ToolBudgetState extends ResolvedToolBudget {
  * @deprecated Turn budgets are no longer accepted as launch configuration or
  * enforced. Retained only to decode historical persisted status and result data.
  */
-export type TurnBudgetOutcome = "within-budget" | "wrap-up-requested" | "termination-deferred" | "exceeded";
+export type TurnBudgetOutcome =
+	| "within-budget"
+	| "wrap-up-requested"
+	| "termination-deferred"
+	| "exceeded";
 
 /**
  * @deprecated Historical persisted turn-budget state. New runs do not produce
@@ -363,7 +416,16 @@ export interface ControlEvent {
 	nestedRunId?: string;
 	nestingPath?: NestedRunAddress["path"];
 	message: string;
-	reason?: "idle" | "completion_guard" | "active_long_running" | "tool_failures" | "supervisor_request" | "time_threshold" | "turn_threshold" | "token_threshold" | "tool_open_threshold";
+	reason?:
+		| "idle"
+		| "completion_guard"
+		| "active_long_running"
+		| "tool_failures"
+		| "supervisor_request"
+		| "time_threshold"
+		| "turn_threshold"
+		| "token_threshold"
+		| "tool_open_threshold";
 	turns?: number;
 	tokens?: number;
 	toolCount?: number;
@@ -378,7 +440,12 @@ export interface ControlEvent {
 	taskPreview?: string;
 }
 
-export type SubagentResultStatus = "completed" | "failed" | "paused" | "stopped" | "detached";
+export type SubagentResultStatus =
+	| "completed"
+	| "failed"
+	| "paused"
+	| "stopped"
+	| "detached";
 export type SubagentOutputState = "present" | "absent" | "unknown";
 export type SubagentRunMode = "single" | "parallel" | "chain" | "workflow";
 export type SubagentResultMode = SubagentRunMode;
@@ -502,7 +569,13 @@ export interface AgentContract {
 
 export type ChainGateLayer = "execution" | "acceptance";
 
-export type ExecutionProjectionStatus = "completed" | "failed" | "partial" | "paused" | "stopped" | "detached";
+export type ExecutionProjectionStatus =
+	| "completed"
+	| "failed"
+	| "partial"
+	| "paused"
+	| "stopped"
+	| "detached";
 
 export interface ExecutionProjection {
 	status: ExecutionProjectionStatus;
@@ -521,7 +594,12 @@ export interface ReviewProjection {
 }
 
 export interface FileMutationEffect {
-	status: "not-requested" | "not-applicable" | "observed" | "missing" | "blocked";
+	status:
+		| "not-requested"
+		| "not-applicable"
+		| "observed"
+		| "missing"
+		| "blocked";
 	expected: boolean;
 	attempted: boolean;
 	message?: string;
@@ -590,12 +668,25 @@ export interface TimeoutRecoverySummary {
 }
 
 /** Safe parent-facing subset of a timeout recovery summary. */
-export type TimeoutRecoveryProjection = Pick<TimeoutRecoverySummary, "termination" | "changedFiles" | "truncated" | "recoveryNeeded" | "reason" | "reportStatus">;
+export type TimeoutRecoveryProjection = Pick<
+	TimeoutRecoverySummary,
+	| "termination"
+	| "changedFiles"
+	| "truncated"
+	| "recoveryNeeded"
+	| "reason"
+	| "reportStatus"
+>;
 
 export const SUBAGENT_LIFECYCLE_ARTIFACT_VERSION = 3;
-export type SubagentLifecycleArtifactVersion = typeof SUBAGENT_LIFECYCLE_ARTIFACT_VERSION;
+export type SubagentLifecycleArtifactVersion =
+	typeof SUBAGENT_LIFECYCLE_ARTIFACT_VERSION;
 
-export type ProcessTerminalState = "pending" | "observed" | "unknown" | "not-started";
+export type ProcessTerminalState =
+	| "pending"
+	| "observed"
+	| "unknown"
+	| "not-started";
 export type ProcessTerminalReason =
 	| "observer-unavailable"
 	| "runner-candidate-missing"
@@ -618,16 +709,16 @@ export interface RunnerProcessInstanceExitV1 {
 
 export type ProcessTreeTerminalV1 =
 	| {
-		state: "observed";
-		mechanism: "posix-process-group";
-		processGroupId: number;
-		verifiedAt: number;
-	}
+			state: "observed";
+			mechanism: "posix-process-group";
+			processGroupId: number;
+			verifiedAt: number;
+	  }
 	| {
-		state: "unknown";
-		reason: "unsupported-platform" | "signal-failed" | "verification-failed";
-		diagnostic?: string;
-	};
+			state: "unknown";
+			reason: "unsupported-platform" | "signal-failed" | "verification-failed";
+			diagnostic?: string;
+	  };
 
 export interface PiWriterProcessInstanceExitV1 {
 	processInstanceId: string;
@@ -639,7 +730,9 @@ export interface PiWriterProcessInstanceExitV1 {
 	processTree: ProcessTreeTerminalV1;
 }
 
-export type ProcessInstanceExitV1 = RunnerProcessInstanceExitV1 | PiWriterProcessInstanceExitV1;
+export type ProcessInstanceExitV1 =
+	| RunnerProcessInstanceExitV1
+	| PiWriterProcessInstanceExitV1;
 
 export interface CanonicalSessionTerminalV1 {
 	canonicalSessionId: string;
@@ -661,16 +754,16 @@ interface ProcessTerminalBaseV1 {
 export type ProcessTerminalV1 =
 	| (ProcessTerminalBaseV1 & { state: "pending" | "not-started" })
 	| (ProcessTerminalBaseV1 & {
-		state: "observed";
-		observedAt: number;
-		instances: ProcessInstanceExitV1[];
-		canonicalSession?: CanonicalSessionTerminalV1;
-	})
+			state: "observed";
+			observedAt: number;
+			instances: ProcessInstanceExitV1[];
+			canonicalSession?: CanonicalSessionTerminalV1;
+	  })
 	| (ProcessTerminalBaseV1 & {
-		state: "unknown";
-		reason: ProcessTerminalReason;
-		diagnostic?: string;
-	});
+			state: "unknown";
+			reason: ProcessTerminalReason;
+			diagnostic?: string;
+	  });
 
 /** Identifies the durable schedule that launched a run, so its completion is attributable. */
 export interface ScheduleOrigin {
@@ -678,8 +771,22 @@ export interface ScheduleOrigin {
 	name?: string;
 }
 
-export type SteeringActionState = "delivered" | "scheduled" | "pending" | "partial" | "recovered" | "failed";
-export type SteeringTargetState = "scheduled" | "pending" | "routed" | "queued" | "delivered" | "late" | "failed" | "recovered";
+export type SteeringActionState =
+	| "delivered"
+	| "scheduled"
+	| "pending"
+	| "partial"
+	| "recovered"
+	| "failed";
+export type SteeringTargetState =
+	| "scheduled"
+	| "pending"
+	| "routed"
+	| "queued"
+	| "delivered"
+	| "late"
+	| "failed"
+	| "recovered";
 
 export interface SteeringTargetStatus {
 	index: number;
@@ -819,7 +926,28 @@ export interface SteeringRecoveryDescriptor {
 
 export type PublicNestedStepSummary = Pick<
 	NestedStepSummary,
-	"agent" | "sessionName" | "status" | "model" | "thinking" | "sessionFile" | "transcriptPath" | "transcriptError" | "activityState" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount" | "toolBudget" | "toolBudgetBlocked" | "startedAt" | "endedAt" | "error" | "timedOut" | "stopped"
+	| "agent"
+	| "sessionName"
+	| "status"
+	| "model"
+	| "thinking"
+	| "sessionFile"
+	| "transcriptPath"
+	| "transcriptError"
+	| "activityState"
+	| "lastActivityAt"
+	| "currentTool"
+	| "currentToolStartedAt"
+	| "currentPath"
+	| "turnCount"
+	| "toolCount"
+	| "toolBudget"
+	| "toolBudgetBlocked"
+	| "startedAt"
+	| "endedAt"
+	| "error"
+	| "timedOut"
+	| "stopped"
 > & {
 	children?: PublicNestedRunSummary[];
 };
@@ -832,7 +960,51 @@ export type CostSummary = {
 
 export type PublicNestedRunSummary = Pick<
 	NestedRunSummary,
-	"id" | "parentRunId" | "parentStepIndex" | "parentAgent" | "depth" | "path" | "asyncDir" | "sessionId" | "sessionFile" | "intercomTarget" | "ownerIntercomTarget" | "leafIntercomTarget" | "ownerState" | "mode" | "state" | "agent" | "sessionName" | "agents" | "model" | "thinking" | "currentStep" | "chainStepCount" | "parallelGroups" | "activityState" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount" | "toolBudget" | "toolBudgetBlocked" | "totalTokens" | "totalCost" | "startedAt" | "endedAt" | "lastUpdate" | "error" | "timeoutMs" | "deadlineAt" | "timedOut" | "stopped" | "turnBudget" | "turnBudgetExceeded" | "wrapUpRequested"
+	| "id"
+	| "parentRunId"
+	| "parentStepIndex"
+	| "parentAgent"
+	| "depth"
+	| "path"
+	| "asyncDir"
+	| "sessionId"
+	| "sessionFile"
+	| "intercomTarget"
+	| "ownerIntercomTarget"
+	| "leafIntercomTarget"
+	| "ownerState"
+	| "mode"
+	| "state"
+	| "agent"
+	| "sessionName"
+	| "agents"
+	| "model"
+	| "thinking"
+	| "currentStep"
+	| "chainStepCount"
+	| "parallelGroups"
+	| "activityState"
+	| "lastActivityAt"
+	| "currentTool"
+	| "currentToolStartedAt"
+	| "currentPath"
+	| "turnCount"
+	| "toolCount"
+	| "toolBudget"
+	| "toolBudgetBlocked"
+	| "totalTokens"
+	| "totalCost"
+	| "startedAt"
+	| "endedAt"
+	| "lastUpdate"
+	| "error"
+	| "timeoutMs"
+	| "deadlineAt"
+	| "timedOut"
+	| "stopped"
+	| "turnBudget"
+	| "turnBudgetExceeded"
+	| "wrapUpRequested"
 > & {
 	steps?: PublicNestedStepSummary[];
 	children?: PublicNestedRunSummary[];
@@ -957,7 +1129,12 @@ export interface ModelAttempt {
 	usage?: Usage;
 }
 
-export type AcceptanceLevel = "auto" | "none" | "attested" | "checked" | "verified";
+export type AcceptanceLevel =
+	| "auto"
+	| "none"
+	| "attested"
+	| "checked"
+	| "verified";
 
 export type AcceptanceEvidenceKind =
 	| "changed-files"
@@ -1000,10 +1177,21 @@ export interface AcceptanceConfig {
 	review?: AcceptanceReviewGate | false;
 	stopRules?: string[];
 	reason?: string;
+	/**
+	 * Require the child to deliver its acceptance report through the structured
+	 * output channel (a schema-validated `acceptanceReport` parameter on the
+	 * `structured_output` tool) in addition to the prompt contract. "off" keeps
+	 * the text fence channel. Omitted preserves the current behavior: the
+	 * structured channel is only used when the task already has an outputSchema.
+	 */
+	report?: "on" | "off";
 }
 
 /** Bare "none" and "verified" are not accepted; verified policies require object form with runtime commands. */
-export type AcceptanceInput = Exclude<AcceptanceLevel, "none" | "verified"> | false | AcceptanceConfig;
+export type AcceptanceInput =
+	| Exclude<AcceptanceLevel, "none" | "verified">
+	| false
+	| AcceptanceConfig;
 
 export interface ResolvedAcceptanceGate extends AcceptanceGate {
 	id: string;
@@ -1046,7 +1234,10 @@ export interface AcceptanceReport {
 	notes?: string;
 }
 
-export type AcceptanceRuntimeCheckStatus = "passed" | "failed" | "not-applicable";
+export type AcceptanceRuntimeCheckStatus =
+	| "passed"
+	| "failed"
+	| "not-applicable";
 
 export interface AcceptanceRuntimeCheck {
 	id: string;
@@ -1341,9 +1532,30 @@ export interface AgentCapabilityRow {
 	executable: boolean;
 	restrictionSources?: string[];
 	aliases?: string[];
-	runner: { type: "pi" } | { type: "external-cli"; adapter?: string; capabilities: ExternalCliCapabilities } | { type: "external-job"; provider: string; available?: boolean; capabilities: ExternalJobRunnerStatus["capabilities"] };
-	tools: { ambient: boolean; names: string[]; mcpDirectTools: string[]; mutationTools?: string[] };
-	model?: { value?: string; fallbackModels?: string[]; thinking?: string | false };
+	runner:
+		| { type: "pi" }
+		| {
+				type: "external-cli";
+				adapter?: string;
+				capabilities: ExternalCliCapabilities;
+		  }
+		| {
+				type: "external-job";
+				provider: string;
+				available?: boolean;
+				capabilities: ExternalJobRunnerStatus["capabilities"];
+		  };
+	tools: {
+		ambient: boolean;
+		names: string[];
+		mcpDirectTools: string[];
+		mutationTools?: string[];
+	};
+	model?: {
+		value?: string;
+		fallbackModels?: string[];
+		thinking?: string | false;
+	};
 	execution?: { defaultAsync?: boolean; timeoutMs?: number };
 	output?: { path?: string; mode?: OutputMode };
 	extensions?: { names?: string[]; subagentOnly?: string[]; skills?: string[] };
@@ -1395,9 +1607,9 @@ export interface Details {
 		artifactPath?: string;
 	};
 	// Chain metadata for observability
-	chainAgents?: string[];      // Agent names in order, e.g., ["scout", "planner"]
-	totalSteps?: number;         // Total steps in chain
-	currentStepIndex?: number;   // 0-indexed current step (for running chains)
+	chainAgents?: string[]; // Agent names in order, e.g., ["scout", "planner"]
+	totalSteps?: number; // Total steps in chain
+	currentStepIndex?: number; // 0-indexed current step (for running chains)
 	workflowGraph?: WorkflowGraphSnapshot;
 	/** Validated, display-only fanout plan supplied with a workflow launch. */
 	preflight?: WorkflowPreflightV1;
@@ -1436,7 +1648,16 @@ export interface Details {
 		trace: Array<{
 			operation: "run" | "status" | "steer" | "host";
 			key: string;
-			state: "started" | "completed" | "failed" | "detached" | "stopped" | "reused" | "queued" | "delivered" | "missed";
+			state:
+				| "started"
+				| "completed"
+				| "failed"
+				| "detached"
+				| "stopped"
+				| "reused"
+				| "queued"
+				| "delivered"
+				| "missed";
 			agent?: string;
 			runId?: string;
 			phase?: string;
@@ -1504,7 +1725,15 @@ export interface AsyncParallelGroupStatus {
 	stepIndex: number;
 }
 
-export type NestedRunState = "queued" | "running" | "complete" | "failed" | "partial" | "paused" | "stopped" | "rejected";
+export type NestedRunState =
+	| "queued"
+	| "running"
+	| "complete"
+	| "failed"
+	| "partial"
+	| "paused"
+	| "stopped"
+	| "rejected";
 export type NestedOwnerState = "live" | "gone" | "unknown";
 
 export interface NestedRunAddress {
@@ -1520,7 +1749,16 @@ export interface NestedStepSummary {
 	agent: string;
 	/** Human-readable display name for the child session, when derived at launch. */
 	sessionName?: string;
-	status: "pending" | "running" | "complete" | "completed" | "failed" | "partial" | "paused" | "stopped" | "rejected";
+	status:
+		| "pending"
+		| "running"
+		| "complete"
+		| "completed"
+		| "failed"
+		| "partial"
+		| "paused"
+		| "stopped"
+		| "rejected";
 	model?: string;
 	thinking?: string;
 	sessionFile?: string;
@@ -1651,20 +1889,37 @@ export interface AsyncStartedEvent {
 export type AgentRunnerConfig =
 	| { type: "pi" }
 	| {
-		type: "external-cli";
-		adapter?: "codex-exec" | "codex-exec-writer" | "claude-code" | "claude-code-writer" | "cursor-agent" | "cursor-agent-writer";
-		command: string;
-		args?: string[];
-		promptDelivery?: "stdin";
-		capabilities?: ExternalCliCapabilityNarrowing;
-	}
+			type: "external-cli";
+			adapter?:
+				| "codex-exec"
+				| "codex-exec-writer"
+				| "claude-code"
+				| "claude-code-writer"
+				| "cursor-agent"
+				| "cursor-agent-writer";
+			command: string;
+			args?: string[];
+			promptDelivery?: "stdin";
+			capabilities?: ExternalCliCapabilityNarrowing;
+	  }
 	| {
-		type: "external-job";
-		provider: string;
-		options?: Record<string, unknown>;
-	};
+			type: "external-job";
+			provider: string;
+			options?: Record<string, unknown>;
+	  };
 
-export type ExternalCliCapabilityNarrowing = Partial<Record<"steer" | "resume" | "structuredOutput" | "toolEvents" | "supervisor" | "forkContext" | "extensionBindings", false>>;
+export type ExternalCliCapabilityNarrowing = Partial<
+	Record<
+		| "steer"
+		| "resume"
+		| "structuredOutput"
+		| "toolEvents"
+		| "supervisor"
+		| "forkContext"
+		| "extensionBindings",
+		false
+	>
+>;
 
 export interface ExternalCliCapabilities {
 	stop: true;
@@ -1678,17 +1933,76 @@ export interface ExternalCliCapabilities {
 }
 
 export interface ExternalCliReceiptMetadata {
-	adapter: { id: "external-cli" | "codex-exec" | "codex-exec-writer" | "claude-code" | "claude-code-writer" | "cursor-agent" | "cursor-agent-writer" | "grok-build"; version: 1; executionMode: "one-shot-stdin" | "one-shot-prompt-file" };
+	adapter: {
+		id:
+			| "external-cli"
+			| "codex-exec"
+			| "codex-exec-writer"
+			| "claude-code"
+			| "claude-code-writer"
+			| "cursor-agent"
+			| "cursor-agent-writer"
+			| "grok-build";
+		version: 1;
+		executionMode: "one-shot-stdin" | "one-shot-prompt-file";
+	};
 	capabilities: ExternalCliCapabilities;
 	safety?:
 		| { sandbox: "read-only"; approvalPolicy: "never"; ephemeral: true }
-		| { access: "workspace-write"; sandbox: "workspace-write"; approvalPolicy: "never"; ephemeral: true }
-		| { permissionMode: "plan"; tools: "none"; mcp: "empty-strict"; settingSources: "none"; sessionPersistence: false }
-		| { access: "read-only"; authentication: "existing-cli-required"; permissionMode: "plan"; tools: "none"; mcp: "empty-strict"; settingSources: "user"; userSettingsTrust: "required"; sessionPersistence: false }
-		| { access: "workspace-write"; authentication: "existing-cli-required"; permissionMode: "acceptEdits"; tools: "Read,Write,Edit,Glob,Grep"; mcp: "empty-strict"; settingSources: "user"; userSettingsTrust: "required"; sessionPersistence: false }
-		| { access: "read-only"; authentication: "cursor-api-key-or-existing-login"; mode: "ask"; sandbox: "enabled"; workspaceTrust: "existing-required"; sessionReuse: false }
-		| { access: "workspace-write"; authentication: "cursor-api-key-or-existing-login"; mode: "print"; sandbox: "enabled"; workspaceTrust: "existing-required"; sessionReuse: false };
-	outputArtifacts?: { stdoutPath?: string; stderrPath?: string; finalOutputPath?: string };
+		| {
+				access: "workspace-write";
+				sandbox: "workspace-write";
+				approvalPolicy: "never";
+				ephemeral: true;
+		  }
+		| {
+				permissionMode: "plan";
+				tools: "none";
+				mcp: "empty-strict";
+				settingSources: "none";
+				sessionPersistence: false;
+		  }
+		| {
+				access: "read-only";
+				authentication: "existing-cli-required";
+				permissionMode: "plan";
+				tools: "none";
+				mcp: "empty-strict";
+				settingSources: "user";
+				userSettingsTrust: "required";
+				sessionPersistence: false;
+		  }
+		| {
+				access: "workspace-write";
+				authentication: "existing-cli-required";
+				permissionMode: "acceptEdits";
+				tools: "Read,Write,Edit,Glob,Grep";
+				mcp: "empty-strict";
+				settingSources: "user";
+				userSettingsTrust: "required";
+				sessionPersistence: false;
+		  }
+		| {
+				access: "read-only";
+				authentication: "cursor-api-key-or-existing-login";
+				mode: "ask";
+				sandbox: "enabled";
+				workspaceTrust: "existing-required";
+				sessionReuse: false;
+		  }
+		| {
+				access: "workspace-write";
+				authentication: "cursor-api-key-or-existing-login";
+				mode: "print";
+				sandbox: "enabled";
+				workspaceTrust: "existing-required";
+				sessionReuse: false;
+		  };
+	outputArtifacts?: {
+		stdoutPath?: string;
+		stderrPath?: string;
+		finalOutputPath?: string;
+	};
 	handoff: { mode: "fresh" };
 	supervisor: { mode: "unsupported"; reason: string };
 	nonResumableReason: string;
@@ -1702,7 +2016,10 @@ export interface ExternalCliRunnerStatus {
 	adapter: ExternalCliReceiptMetadata["adapter"];
 	safety?: ExternalCliReceiptMetadata["safety"];
 	capabilities: ExternalCliCapabilities;
-	unsupportedReasons: Record<Exclude<keyof ExternalCliCapabilities, "stop">, string>;
+	unsupportedReasons: Record<
+		Exclude<keyof ExternalCliCapabilities, "stop">,
+		string
+	>;
 	nonResumableReason: string;
 }
 
@@ -1768,7 +2085,15 @@ export interface AsyncStatus {
 	mode: SubagentRunMode;
 	context?: "fresh" | "fork" | "mixed";
 	isNested?: boolean;
-	state: "queued" | "running" | "complete" | "failed" | "partial" | "paused" | "stopped" | "rejected";
+	state:
+		| "queued"
+		| "running"
+		| "complete"
+		| "failed"
+		| "partial"
+		| "paused"
+		| "stopped"
+		| "rejected";
 	/** Display-only dismissal marker for a reload-orphaned workflow. */
 	displayDismissedAt?: number;
 	error?: string;
@@ -1846,7 +2171,16 @@ export interface AsyncStatus {
 		parentWorkflowRunId?: string;
 		outputName?: string;
 		structured?: boolean;
-		status: "pending" | "running" | "complete" | "completed" | "failed" | "partial" | "paused" | "stopped" | "rejected";
+		status:
+			| "pending"
+			| "running"
+			| "complete"
+			| "completed"
+			| "failed"
+			| "partial"
+			| "paused"
+			| "stopped"
+			| "rejected";
 		stopRequested?: boolean;
 		stopRequestedAt?: number;
 		children?: NestedRunSummary[];
@@ -1913,7 +2247,10 @@ export interface AsyncStatus {
 	parallelHandoff?: ParallelHandoffReference;
 }
 
-export type AsyncJobStep = Omit<NonNullable<AsyncStatus["steps"]>[number], "timeoutRecovery"> & {
+export type AsyncJobStep = Omit<
+	NonNullable<AsyncStatus["steps"]>[number],
+	"timeoutRecovery"
+> & {
 	index?: number;
 	description?: string;
 	timeoutRecovery?: TimeoutRecoveryProjection;
@@ -1928,7 +2265,15 @@ export interface AsyncJobState {
 	cwd?: string;
 	/** Parent-resolved child session root retained for trusted live transcript lookup. */
 	sessionRoot?: string;
-	status: "queued" | "running" | "complete" | "failed" | "partial" | "paused" | "stopped" | "rejected";
+	status:
+		| "queued"
+		| "running"
+		| "complete"
+		| "failed"
+		| "partial"
+		| "paused"
+		| "stopped"
+		| "rejected";
 	/** Short caller-facing task/goal shown in fleet surfaces when available. */
 	description?: string;
 	pid?: number;
@@ -2115,7 +2460,10 @@ export interface ForegroundRunControl {
 	/** Independently tracked children for foreground parallel work and fleet inspection. */
 	activeChildren?: Map<number, ForegroundChildControl>;
 	/** Live Prompt Audit redo callback. It is current-session memory only. */
-	promptAuditRedo?: (index: number, guidance: string) => Promise<{ text: string; isError?: boolean }>;
+	promptAuditRedo?: (
+		index: number,
+		guidance: string,
+	) => Promise<{ text: string; isError?: boolean }>;
 	/** Memory-only source run for Prompt Audit redo. */
 	sourceRunId?: string;
 	/** Memory-only replacement run started by Prompt Audit redo. */
@@ -2206,7 +2554,10 @@ export interface SubagentState {
 	/** Live in-process workflow controllers. Durable status remains on disk after settlement. */
 	workflowControllers?: Map<string, AbortController>;
 	/** Live in-process workflow child stoppers keyed by parent workflow run id. */
-	workflowChildStops?: Map<string, (childId: string, message?: string) => boolean>;
+	workflowChildStops?: Map<
+		string,
+		(childId: string, message?: string) => boolean
+	>;
 }
 
 export interface HerdrProjectPaneSnapshot {
@@ -2231,8 +2582,8 @@ export interface HerdrProjectPaneSnapshot {
 // Display
 // ============================================================================
 
-export type DisplayItem = 
-	| { type: "text"; text: string } 
+export type DisplayItem =
+	| { type: "text"; text: string }
 	| { type: "tool"; name: string; args: Record<string, unknown> };
 
 // ============================================================================
@@ -2256,13 +2607,15 @@ export const INTERCOM_DETACH_RESPONSE_EVENT = "pi-intercom:detach-response";
 export const SUBAGENT_ASYNC_STARTED_EVENT = "subagent:async-started";
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 export const SUBAGENT_PROCESS_TERMINAL_EVENT = "subagent:process-terminal";
-export const SUBAGENT_FOREGROUND_COMPLETE_EVENT = "subagent:foreground-complete";
+export const SUBAGENT_FOREGROUND_COMPLETE_EVENT =
+	"subagent:foreground-complete";
 export const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
 export const SUBAGENT_CONTROL_INTERCOM_EVENT = "subagent:control-intercom";
 export const SUBAGENT_STEERING_NOTICE_EVENT = "subagent:steering-notice";
 export const SUBAGENT_CHILD_STATUS_EVENT = "subagent:child-status";
 export const SUBAGENT_RESULT_INTERCOM_EVENT = "subagent:result-intercom";
-export const SUBAGENT_RESULT_INTERCOM_DELIVERY_EVENT = "subagent:result-intercom-delivery";
+export const SUBAGENT_RESULT_INTERCOM_DELIVERY_EVENT =
+	"subagent:result-intercom-delivery";
 
 export interface SubagentChildStatusEvent {
 	type: "subagent.child-status";
@@ -2364,7 +2717,12 @@ export interface RunSyncOptions {
 	/** Package-internal one-use authorization for one foreground workflow child. */
 	workflowChildPermitLaunch?: WorkflowChildPermitContext;
 	/** Registry models available for heuristic bare-model resolution */
-	availableModels?: Array<{ provider: string; id: string; fullId: string; contextWindow?: number }>;
+	availableModels?: Array<{
+		provider: string;
+		id: string;
+		fullId: string;
+		contextWindow?: number;
+	}>;
 	/** Current parent-session provider to prefer for ambiguous bare model ids */
 	preferredModelProvider?: string;
 	/** Parent Pi event host used to snapshot runtime-registered MCP servers before child launch. */
@@ -2378,6 +2736,8 @@ export interface RunSyncOptions {
 		schemaPath: string;
 		outputPath: string;
 		acceptanceReportPath?: string;
+		acceptanceReportRequired?: boolean;
+		reportOnly?: boolean;
 	};
 	agentContract?: AgentContract;
 	acceptance?: AcceptanceInput;
@@ -2390,7 +2750,9 @@ export interface RunSyncOptions {
 	/** Private live callback for the exact child prompt after runtime acceptance injection. */
 	onEffectivePrompt?: (prompt: string) => void;
 	/** Internal lifecycle hook for the observer shared across retries of one logical child. */
-	onOrcaProgressTabCreated?: (tab: import("../runs/shared/orca-progress-tabs.ts").OrcaProgressTab) => void;
+	onOrcaProgressTabCreated?: (
+		tab: import("../runs/shared/orca-progress-tabs.ts").OrcaProgressTab,
+	) => void;
 }
 
 export type IntercomBridgeMode = "off" | "fork-only" | "always";
@@ -2454,8 +2816,10 @@ export const FLEET_KEYBINDING_ACTIONS = [
 	"toggleTools",
 ] as const;
 
-export type FleetKeybindingAction = typeof FLEET_KEYBINDING_ACTIONS[number];
-export type FleetKeybindingsConfig = Partial<Record<FleetKeybindingAction, string[]>>;
+export type FleetKeybindingAction = (typeof FLEET_KEYBINDING_ACTIONS)[number];
+export type FleetKeybindingsConfig = Partial<
+	Record<FleetKeybindingAction, string[]>
+>;
 
 export interface OrcaProgressTabsConfig {
 	/** Create one Orca observer tab per top-level subagent call. Experimental and opt-in. */
@@ -2607,9 +2971,10 @@ export function resolveTempScopeId(options?: {
 	homedir?: (() => string) | undefined;
 }): string {
 	const env = options?.env ?? process.env;
-	const getuid = options && Object.hasOwn(options, "getuid")
-		? options.getuid
-		: process.getuid?.bind(process);
+	const getuid =
+		options && Object.hasOwn(options, "getuid")
+			? options.getuid
+			: process.getuid?.bind(process);
 	if (typeof getuid === "function") {
 		return `uid-${getuid()}`;
 	}
@@ -2619,9 +2984,10 @@ export function resolveTempScopeId(options?: {
 		if (value) return `user-${sanitizeTempScopeSegment(value)}`;
 	}
 
-	const userInfo = options && Object.hasOwn(options, "userInfo")
-		? options.userInfo
-		: os.userInfo;
+	const userInfo =
+		options && Object.hasOwn(options, "userInfo")
+			? options.userInfo
+			: os.userInfo;
 	try {
 		const username = userInfo?.().username;
 		if (username) return `user-${sanitizeTempScopeSegment(username)}`;
@@ -2632,12 +2998,12 @@ export function resolveTempScopeId(options?: {
 	const homedir = env.USERPROFILE ?? env.HOME;
 	if (homedir) return `home-${sanitizeTempScopeSegment(homedir)}`;
 
-	const resolveHomedir = options && Object.hasOwn(options, "homedir")
-		? options.homedir
-		: os.homedir;
+	const resolveHomedir =
+		options && Object.hasOwn(options, "homedir") ? options.homedir : os.homedir;
 	try {
 		const fallbackHomedir = resolveHomedir?.();
-		if (fallbackHomedir) return `home-${sanitizeTempScopeSegment(fallbackHomedir)}`;
+		if (fallbackHomedir)
+			return `home-${sanitizeTempScopeSegment(fallbackHomedir)}`;
 	} catch {
 		// Fall through to the last-resort shared scope.
 	}
@@ -2674,7 +3040,64 @@ export const POLL_INTERVAL_MS = 250;
 export const WIDGET_ANIMATION_INTERVAL_MS = 1000;
 export const MAX_WIDGET_JOBS = 4;
 export const DEFAULT_SUBAGENT_MAX_DEPTH = 2;
-export const SUBAGENT_ACTIONS = ["list", "get", "models", "children.list", "guide", "validate", "create", "update", "delete", "eject", "disable", "enable", "reset", "mission.create", "mission.list", "mission.show", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close", "worktree.discard", "worktree.cleanup", "lane.status", "lane.recordMerge", "lane.recordSupersession", "refine", "refine.show", "refine.rollback", "inspector.open", "inspector.status", "inspector.close", "project.open", "project.status", "project.close", "status", "debug.run", "grant-spawn-budget", "interrupt", "resume", "steer", "stop", "dismiss", "doctor", "watchdog.status", "watchdog.check", "watchdog.configure", "watchdog.recommend-model", "schedule.create", "schedule.list", "schedule.show", "schedule.history", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"] as const;
+export const SUBAGENT_ACTIONS = [
+	"list",
+	"get",
+	"models",
+	"children.list",
+	"guide",
+	"validate",
+	"create",
+	"update",
+	"delete",
+	"eject",
+	"disable",
+	"enable",
+	"reset",
+	"mission.create",
+	"mission.list",
+	"mission.show",
+	"mission.update",
+	"mission.resolve-decision",
+	"mission.attach-run",
+	"mission.close",
+	"worktree.discard",
+	"worktree.cleanup",
+	"lane.status",
+	"lane.recordMerge",
+	"lane.recordSupersession",
+	"refine",
+	"refine.show",
+	"refine.rollback",
+	"inspector.open",
+	"inspector.status",
+	"inspector.close",
+	"project.open",
+	"project.status",
+	"project.close",
+	"status",
+	"debug.run",
+	"grant-spawn-budget",
+	"interrupt",
+	"resume",
+	"steer",
+	"stop",
+	"dismiss",
+	"doctor",
+	"watchdog.status",
+	"watchdog.check",
+	"watchdog.configure",
+	"watchdog.recommend-model",
+	"schedule.create",
+	"schedule.list",
+	"schedule.show",
+	"schedule.history",
+	"schedule.pause",
+	"schedule.resume",
+	"schedule.run",
+	"schedule.run-due",
+	"schedule.delete",
+] as const;
 
 export const DEFAULT_FORK_PREAMBLE =
 	"You are a delegated subagent running from a fork of the parent session. " +
@@ -2683,7 +3106,12 @@ export const DEFAULT_FORK_PREAMBLE =
 	"Your sole job is to execute the task below and return a focused result for that task using your tools.";
 
 function normalizeTopLevelParallelValue(value: unknown): number | undefined {
-	const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+	const parsed =
+		typeof value === "number"
+			? value
+			: typeof value === "string"
+				? Number(value)
+				: NaN;
 	if (!Number.isInteger(parsed) || parsed < 1) return undefined;
 	return parsed;
 }
@@ -2696,9 +3124,11 @@ export function resolveTopLevelParallelConcurrency(
 	override: unknown,
 	configValue: unknown,
 ): number {
-	return normalizeTopLevelParallelValue(override)
-		?? normalizeTopLevelParallelValue(configValue)
-		?? MAX_CONCURRENCY;
+	return (
+		normalizeTopLevelParallelValue(override) ??
+		normalizeTopLevelParallelValue(configValue) ??
+		MAX_CONCURRENCY
+	);
 }
 
 export function getAsyncConfigPath(suffix: string): string {
@@ -2718,7 +3148,12 @@ export function wrapForkTask(task: string, preamble?: string | false): string {
 // ============================================================================
 
 function normalizeNonNegativeInteger(value: unknown): number | undefined {
-	const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+	const parsed =
+		typeof value === "number"
+			? value
+			: typeof value === "string"
+				? Number(value)
+				: NaN;
 	if (!Number.isInteger(parsed) || parsed < 0) return undefined;
 	return parsed;
 }
@@ -2727,19 +3162,33 @@ export function normalizeMaxSubagentDepth(value: unknown): number | undefined {
 	return normalizeNonNegativeInteger(value);
 }
 
-export function resolveCurrentMaxSubagentDepth(configMaxDepth?: number): number {
-	return normalizeMaxSubagentDepth(process.env.PI_SUBAGENT_MAX_DEPTH)
-		?? normalizeMaxSubagentDepth(configMaxDepth)
-		?? DEFAULT_SUBAGENT_MAX_DEPTH;
+export function resolveCurrentMaxSubagentDepth(
+	configMaxDepth?: number,
+): number {
+	return (
+		normalizeMaxSubagentDepth(process.env.PI_SUBAGENT_MAX_DEPTH) ??
+		normalizeMaxSubagentDepth(configMaxDepth) ??
+		DEFAULT_SUBAGENT_MAX_DEPTH
+	);
 }
 
-export function resolveChildMaxSubagentDepth(parentMaxDepth: number, agentMaxDepth?: number): number {
-	const normalizedParent = normalizeMaxSubagentDepth(parentMaxDepth) ?? DEFAULT_SUBAGENT_MAX_DEPTH;
+export function resolveChildMaxSubagentDepth(
+	parentMaxDepth: number,
+	agentMaxDepth?: number,
+): number {
+	const normalizedParent =
+		normalizeMaxSubagentDepth(parentMaxDepth) ?? DEFAULT_SUBAGENT_MAX_DEPTH;
 	const normalizedAgent = normalizeMaxSubagentDepth(agentMaxDepth);
-	return normalizedAgent === undefined ? normalizedParent : Math.min(normalizedParent, normalizedAgent);
+	return normalizedAgent === undefined
+		? normalizedParent
+		: Math.min(normalizedParent, normalizedAgent);
 }
 
-export function checkSubagentDepth(configMaxDepth?: number): { blocked: boolean; depth: number; maxDepth: number } {
+export function checkSubagentDepth(configMaxDepth?: number): {
+	blocked: boolean;
+	depth: number;
+	maxDepth: number;
+} {
 	const depth = Number(process.env.PI_SUBAGENT_DEPTH ?? "0");
 	const maxDepth = resolveCurrentMaxSubagentDepth(configMaxDepth);
 	const blocked = Number.isFinite(depth) && depth >= maxDepth;
@@ -2751,32 +3200,50 @@ export function getSubagentDepthEnv(maxDepth?: number): Record<string, string> {
 	const nextDepth = Number.isFinite(parentDepth) ? parentDepth + 1 : 1;
 	return {
 		PI_SUBAGENT_DEPTH: String(nextDepth),
-		PI_SUBAGENT_MAX_DEPTH: String(normalizeMaxSubagentDepth(maxDepth) ?? resolveCurrentMaxSubagentDepth()),
+		PI_SUBAGENT_MAX_DEPTH: String(
+			normalizeMaxSubagentDepth(maxDepth) ?? resolveCurrentMaxSubagentDepth(),
+		),
 	};
 }
 
-export function normalizeMaxSubagentSpawnsPerSession(value: unknown): number | undefined {
+export function normalizeMaxSubagentSpawnsPerSession(
+	value: unknown,
+): number | undefined {
 	return normalizeNonNegativeInteger(value);
 }
 
-export function resolveMaxSubagentSpawnsPerSession(configMaxSpawns?: number): number | undefined {
-	const envMaxSpawns = normalizeMaxSubagentSpawnsPerSession(process.env.PI_SUBAGENT_MAX_SPAWNS_PER_SESSION);
-	if (envMaxSpawns !== undefined) return envMaxSpawns === 0 ? undefined : envMaxSpawns;
-	const configuredMaxSpawns = normalizeMaxSubagentSpawnsPerSession(configMaxSpawns);
+export function resolveMaxSubagentSpawnsPerSession(
+	configMaxSpawns?: number,
+): number | undefined {
+	const envMaxSpawns = normalizeMaxSubagentSpawnsPerSession(
+		process.env.PI_SUBAGENT_MAX_SPAWNS_PER_SESSION,
+	);
+	if (envMaxSpawns !== undefined)
+		return envMaxSpawns === 0 ? undefined : envMaxSpawns;
+	const configuredMaxSpawns =
+		normalizeMaxSubagentSpawnsPerSession(configMaxSpawns);
 	return configuredMaxSpawns === 0 ? undefined : configuredMaxSpawns;
 }
 
 export const DEFAULT_MAX_SUBAGENT_SPAWNS_PER_RUN = 64;
 
-export function normalizeMaxSubagentSpawnsPerRun(value: unknown): number | undefined {
+export function normalizeMaxSubagentSpawnsPerRun(
+	value: unknown,
+): number | undefined {
 	const normalized = normalizeNonNegativeInteger(value);
 	return normalized !== undefined && normalized > 0 ? normalized : undefined;
 }
 
-export function resolveMaxSubagentSpawnsPerRun(configMaxSpawns?: number): number {
-	return normalizeMaxSubagentSpawnsPerRun(process.env.PI_SUBAGENT_MAX_SPAWNS_PER_RUN)
-		?? normalizeMaxSubagentSpawnsPerRun(configMaxSpawns)
-		?? DEFAULT_MAX_SUBAGENT_SPAWNS_PER_RUN;
+export function resolveMaxSubagentSpawnsPerRun(
+	configMaxSpawns?: number,
+): number {
+	return (
+		normalizeMaxSubagentSpawnsPerRun(
+			process.env.PI_SUBAGENT_MAX_SPAWNS_PER_RUN,
+		) ??
+		normalizeMaxSubagentSpawnsPerRun(configMaxSpawns) ??
+		DEFAULT_MAX_SUBAGENT_SPAWNS_PER_RUN
+	);
 }
 
 // ============================================================================

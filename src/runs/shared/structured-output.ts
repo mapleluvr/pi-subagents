@@ -9,13 +9,19 @@ import type { JsonSchemaObject } from "../../shared/types.ts";
 export const STRUCTURED_OUTPUT_SCHEMA_ENV = "PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA";
 export const STRUCTURED_OUTPUT_CAPTURE_ENV = "PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE";
 export const STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV = "PI_SUBAGENT_STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE";
+export const ACCEPTANCE_REPORT_REQUIRED_ENV = "PI_SUBAGENT_ACCEPTANCE_REPORT_REQUIRED";
 export const MISSING_STRUCTURED_OUTPUT_CALL_ERROR = "Missing structured_output call; this step has outputSchema and must finish by calling structured_output.";
+export const MISSING_ACCEPTANCE_REPORT_ERROR = "Missing acceptance report; this step requires a valid structured_output delivery of the acceptance report (acceptance.report: \"on\").";
 
 export interface StructuredOutputRuntime {
 	schema: JsonSchemaObject;
 	schemaPath: string;
 	outputPath: string;
 	acceptanceReportPath?: string;
+	/** When true, the child must deliver an acceptance report (standalone structured_output call when there is no outputSchema, or the acceptanceReport parameter otherwise). */
+	acceptanceReportRequired?: boolean;
+	/** True when there is no outputSchema and the structured_output tool carries only the acceptance report. */
+	reportOnly?: boolean;
 }
 
 const SCHEMA_MAP_KEYWORDS = ["properties", "patternProperties", "$defs", "definitions", "dependentSchemas"] as const;
@@ -61,16 +67,65 @@ function rewriteLocalJsonPointerRefs(schema: unknown, pointerPrefix: string, inh
 	return rewritten;
 }
 
-export function createStructuredOutputToolParameters(schema: JsonSchemaObject, options: { acceptanceReport?: boolean } = {}): JsonSchemaObject {
+export function createStructuredOutputToolParameters(schema: JsonSchemaObject, options: { acceptanceReport?: boolean; acceptanceReportSchema?: JsonSchemaObject } = {}): JsonSchemaObject {
+	const reportProperty = options.acceptanceReportSchema
+		? options.acceptanceReportSchema
+		: { type: "object" };
 	return {
 		type: "object",
 		properties: {
 			value: rewriteLocalJsonPointerRefs(schema, "#/properties/value"),
-			...(options.acceptanceReport ? { acceptanceReport: { type: "object" } } : {}),
+			...(options.acceptanceReport ? { acceptanceReport: reportProperty } : {}),
 		},
 		required: ["value"],
 		additionalProperties: false,
 	};
+}
+
+const ACCEPTANCE_REPORT_JSON_SCHEMA: JsonSchemaObject = {
+	type: "object",
+	properties: {
+		criteriaSatisfied: {
+			type: "array",
+			items: {
+				type: "object",
+				properties: {
+					id: { type: "string" },
+					status: { type: "string", enum: ["satisfied", "not-satisfied", "not-applicable"] },
+					evidence: { type: "string" },
+				},
+				required: ["status", "evidence"],
+				additionalProperties: false,
+			},
+		},
+		changedFiles: { type: "array", items: { type: "string" } },
+		testsAddedOrUpdated: { type: "array", items: { type: "string" } },
+		commandsRun: {
+			type: "array",
+			items: {
+				type: "object",
+				properties: {
+					command: { type: "string" },
+					result: { type: "string", enum: ["passed", "failed", "not-run"] },
+					summary: { type: "string" },
+				},
+				required: ["command", "result", "summary"],
+				additionalProperties: false,
+			},
+		},
+		validationOutput: { type: "array", items: { type: "string" } },
+		residualRisks: { type: "array", items: { type: "string" } },
+		noStagedFiles: { type: "boolean" },
+		diffSummary: { type: "string" },
+		reviewFindings: { type: "array", items: { type: "string" } },
+		manualNotes: { type: "string" },
+		notes: { type: "string" },
+	},
+	additionalProperties: false,
+};
+
+export function acceptanceReportJsonSchema(): JsonSchemaObject {
+	return JSON.parse(JSON.stringify(ACCEPTANCE_REPORT_JSON_SCHEMA)) as JsonSchemaObject;
 }
 
 interface CompiledJsonSchema {
@@ -129,7 +184,23 @@ export function assertJsonSchemaObject(schema: unknown, label = "outputSchema"):
 	}
 }
 
-export function createStructuredOutputRuntime(schema: JsonSchemaObject, baseDir?: string, options: { captureAcceptanceReport?: boolean } = {}): StructuredOutputRuntime {
+export function createStructuredOutputRuntime(schema: JsonSchemaObject | undefined, baseDir?: string, options: { captureAcceptanceReport?: boolean; acceptanceReportRequired?: boolean } = {}): StructuredOutputRuntime {
+	if (schema === undefined) {
+		// Report-only runtime: no outputSchema, just a delivery target for the
+		// acceptance report. The child registers a standalone structured_output
+		// tool whose only parameter is the report.
+		const rootDir = baseDir ?? os.tmpdir();
+		fs.mkdirSync(rootDir, { recursive: true });
+		const dir = fs.mkdtempSync(path.join(rootDir, "pi-subagent-structured-"));
+		return {
+			schema: { type: "object", additionalProperties: true },
+			schemaPath: path.join(dir, "schema.json"),
+			outputPath: path.join(dir, "output.json"),
+			...(options.captureAcceptanceReport ? { acceptanceReportPath: path.join(dir, "acceptance-report.json") } : {}),
+			...(options.acceptanceReportRequired ? { acceptanceReportRequired: true } : {}),
+			reportOnly: true,
+		};
+	}
 	assertJsonSchemaObject(schema);
 	const rootDir = baseDir ?? os.tmpdir();
 	fs.mkdirSync(rootDir, { recursive: true });
@@ -137,7 +208,7 @@ export function createStructuredOutputRuntime(schema: JsonSchemaObject, baseDir?
 	const schemaPath = path.join(dir, "schema.json");
 	const outputPath = path.join(dir, "output.json");
 	fs.writeFileSync(schemaPath, JSON.stringify(schema), { mode: 0o600 });
-	return { schema, schemaPath, outputPath, ...(options.captureAcceptanceReport ? { acceptanceReportPath: path.join(dir, "acceptance-report.json") } : {}) };
+	return { schema, schemaPath, outputPath, ...(options.captureAcceptanceReport ? { acceptanceReportPath: path.join(dir, "acceptance-report.json") } : {}), ...(options.acceptanceReportRequired ? { acceptanceReportRequired: true } : {}) };
 }
 
 export async function validateStructuredOutputValue(schema: JsonSchemaObject, value: unknown): Promise<{ status: "valid" } | { status: "invalid"; message: string }> {

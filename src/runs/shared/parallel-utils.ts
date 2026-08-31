@@ -73,6 +73,8 @@ export interface RunnerSubagentStep {
 		schemaPath: string;
 		outputPath: string;
 		acceptanceReportPath?: string;
+		acceptanceReportRequired?: boolean;
+		reportOnly?: boolean;
 	};
 	structuredOutputSchema?: import("../../shared/types.ts").JsonSchemaObject;
 	agentContract?: import("../../shared/types.ts").AgentContract;

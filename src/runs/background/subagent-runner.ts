@@ -79,7 +79,7 @@ import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, deriveForkPromptCache
 import { deriveChildSessionName } from "../../shared/child-session-name.ts";
 import { readRuntimeAcknowledgedExtensions } from "../shared/runtime-acknowledged-extensions.ts";
 import { outputEntryFromAsyncResult, resolveOutputReferences } from "../shared/chain-outputs.ts";
-import { createStructuredOutputRuntime, MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput, readStructuredOutputAcceptanceReport } from "../shared/structured-output.ts";
+import { createStructuredOutputRuntime, MISSING_ACCEPTANCE_REPORT_ERROR, MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput, readStructuredOutputAcceptanceReport } from "../shared/structured-output.ts";
 import { formatMidToolExitError, formatProcessSignalError, isOrdinaryToolForMidToolExit, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
 import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
 import { buildTimeoutRecoverySummary, collectTrackedMutationEvidence, snapshotTrackedMutations } from "../shared/mutation-evidence.ts";
@@ -1450,7 +1450,7 @@ async function runSingleStepInner(
 	// instructions never leak into the display name.
 	const childSessionName = step.sessionName ?? deriveChildSessionName({ agent: step.agent, task, label: step.label });
 	if (step.effectiveAcceptance) {
-		const acceptancePrompt = formatAcceptancePrompt(step.effectiveAcceptance, { reportOptional: isAgentContractV1(step.agentContract), structuredOutput: Boolean(step.structuredOutput?.acceptanceReportPath) });
+		const acceptancePrompt = formatAcceptancePrompt(step.effectiveAcceptance, { reportOptional: isAgentContractV1(step.agentContract), structuredOutput: Boolean(step.structuredOutput?.acceptanceReportPath), reportRequired: Boolean(step.structuredOutput?.acceptanceReportRequired), reportOnly: Boolean(step.structuredOutput?.reportOnly) });
 		if (acceptancePrompt) task = `${task}\n${acceptancePrompt}`;
 	}
 	const sessionEnabled = Boolean(step.sessionFile) || ctx.sessionEnabled;
@@ -1863,6 +1863,15 @@ async function runSingleStepInner(
 		if (effectiveStructuredOutput && run.exitCode === 0 && !run.error && !toolAvailabilityError && !midToolExitError) {
 			if (!run.structuredOutputToolInvoked) {
 				structuredError = MISSING_STRUCTURED_OUTPUT_CALL_ERROR;
+			} else if (effectiveStructuredOutput.reportOnly) {
+				// Report-only runtime: the tool writes the report, not output.json.
+				const acceptanceReport = readStructuredOutputAcceptanceReport(effectiveStructuredOutput);
+				if (!acceptanceReport.value) structuredError = acceptanceReport.error ?? MISSING_ACCEPTANCE_REPORT_ERROR;
+				else {
+					structuredAcceptanceReport = acceptanceReport.value;
+					structuredAcceptanceReportError = acceptanceReport.error;
+					validatedStructuredOutput = true;
+				}
 			} else {
 				const structured = await readStructuredOutput({
 					schema: effectiveStructuredOutput.schema,

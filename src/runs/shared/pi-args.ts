@@ -19,6 +19,7 @@ import { resolvePiPackageRoot } from "./pi-spawn.ts";
 import { encodeExtensionBindings, PI_SUBAGENT_EXTENSION_BINDINGS_ENV, type ExtensionBindings } from "./extension-bindings.ts";
 import { RUNTIME_EXTENSION_ACK_PATH_ENV } from "./runtime-acknowledged-extensions.ts";
 import {
+	ACCEPTANCE_REPORT_REQUIRED_ENV,
 	STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV,
 	STRUCTURED_OUTPUT_CAPTURE_ENV,
 	STRUCTURED_OUTPUT_SCHEMA_ENV,
@@ -206,6 +207,8 @@ export interface BuildPiArgsInput {
 		schemaPath: string;
 		outputPath: string;
 		acceptanceReportPath?: string;
+		acceptanceReportRequired?: boolean;
+		reportOnly?: boolean;
 	};
 	fast?: boolean;
 	modelCandidates?: readonly string[];
@@ -1000,9 +1003,12 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	if (encodedPermissionRules)
 		env[PERMISSION_POLICY_ENV] = encodedPermissionRules;
 	if (input.structuredOutput) {
-		env[STRUCTURED_OUTPUT_CAPTURE_ENV] = input.structuredOutput.outputPath;
-		env[STRUCTURED_OUTPUT_SCHEMA_ENV] = input.structuredOutput.schemaPath;
+		if (!input.structuredOutput.reportOnly) {
+			env[STRUCTURED_OUTPUT_CAPTURE_ENV] = input.structuredOutput.outputPath;
+			env[STRUCTURED_OUTPUT_SCHEMA_ENV] = input.structuredOutput.schemaPath;
+		}
 		if (input.structuredOutput.acceptanceReportPath) env[STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV] = input.structuredOutput.acceptanceReportPath;
+		if (input.structuredOutput.acceptanceReportRequired) env[ACCEPTANCE_REPORT_REQUIRED_ENV] = "1";
 	}
 	if (input.steerInboxDir) {
 		env[SUBAGENT_STEER_INBOX_ENV] = input.steerInboxDir;

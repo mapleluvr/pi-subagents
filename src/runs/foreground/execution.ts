@@ -73,7 +73,7 @@ import { readRuntimeAcknowledgedExtensions } from "../shared/runtime-acknowledge
 import { assertAgentAllowedByCapabilityCeiling, decodeSubagentCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV } from "../shared/capability-ceiling.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { assertThinkingWithinCeiling, decodeThinkingCeiling, intersectThinkingCeilings, SUBAGENT_THINKING_CEILING_ENV } from "../../shared/thinking-ceiling.ts";
-import { MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput, readStructuredOutputAcceptanceReport } from "../shared/structured-output.ts";
+import { MISSING_ACCEPTANCE_REPORT_ERROR, MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput, readStructuredOutputAcceptanceReport } from "../shared/structured-output.ts";
 import { formatMidToolExitError, formatProcessSignalError, isOrdinaryToolForMidToolExit, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
 import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
 import { buildTimeoutRecoverySummary, collectTrackedMutationEvidence, snapshotTrackedMutations } from "../shared/mutation-evidence.ts";
@@ -1519,6 +1519,18 @@ async function runSingleAttempt(
 			result.exitCode = 1;
 			result.error = MISSING_STRUCTURED_OUTPUT_CALL_ERROR;
 			result.structuredOutputFailed = true;
+		} else if (options.structuredOutput.reportOnly) {
+			// Report-only runtime: the tool writes the report, not output.json.
+			const acceptanceReport = readStructuredOutputAcceptanceReport(options.structuredOutput);
+			if (!acceptanceReport.value) {
+				result.exitCode = 1;
+				result.error = acceptanceReport.error ?? MISSING_ACCEPTANCE_REPORT_ERROR;
+				result.structuredOutputFailed = true;
+			} else {
+				(result as SingleResult & { structuredAcceptanceReport?: unknown; structuredAcceptanceReportError?: string }).structuredAcceptanceReport = acceptanceReport.value;
+				(result as SingleResult & { structuredAcceptanceReport?: unknown; structuredAcceptanceReportError?: string }).structuredAcceptanceReportError = acceptanceReport.error;
+				validatedStructuredOutput = true;
+			}
 		} else {
 			const structured = await readStructuredOutput({
 				schema: options.structuredOutput.schema,
@@ -1827,7 +1839,7 @@ async function runSyncCompletionInner(
 		dynamicGroup: options.acceptanceContext?.dynamicGroup,
 		agentContract: options.agentContract,
 	});
-	const acceptancePrompt = formatAcceptancePrompt(effectiveAcceptance, { reportOptional: isAgentContractV1(options.agentContract), structuredOutput: Boolean(options.structuredOutput?.acceptanceReportPath) });
+	const acceptancePrompt = formatAcceptancePrompt(effectiveAcceptance, { reportOptional: isAgentContractV1(options.agentContract), structuredOutput: Boolean(options.structuredOutput?.acceptanceReportPath), reportRequired: Boolean(options.structuredOutput?.acceptanceReportRequired), reportOnly: Boolean(options.structuredOutput?.reportOnly) });
 	const taskWithAcceptance = acceptancePrompt ? `${task}\n${acceptancePrompt}` : task;
 	options.onEffectivePrompt?.(taskWithAcceptance);
 	const sessionEnabled = Boolean(options.sessionFile || options.sessionDir) || shareEnabled;

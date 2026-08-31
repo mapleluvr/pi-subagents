@@ -8,7 +8,7 @@ import { decodePermissionRules, permissionDecision, PERMISSION_AUDIT_PATH_ENV, P
 import { consumeSteerRequestsFromDir, MAX_STEER_QUEUE_SIZE, steerAckPathFromDir, writeSteerAckAt, writeSteerCapabilityAt, writeSteerRequestToDir, type SteerDeliveryStatus, type SteerRequest } from "../background/control-channel.ts";
 import { SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_FANOUT_CHILD_ENV, SUBAGENT_FORK_CACHE_KEY_ENV, SUBAGENT_INHERIT_GLOBAL_CONTEXT_ENV, SUBAGENT_STEER_ACK_DIR_ENV, SUBAGENT_STEER_CAPABILITY_ENV, SUBAGENT_STEER_INBOX_ENV } from "./pi-args.ts";
 import { RUNTIME_EXTENSION_ACK_EVENT, RUNTIME_EXTENSION_ACK_PATH_ENV, isRuntimeAcknowledgedExtensionId, writeRuntimeAcknowledgedExtensions } from "./runtime-acknowledged-extensions.ts";
-import { createStructuredOutputToolParameters, STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV, STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, validateStructuredOutputValue } from "./structured-output.ts";
+import { acceptanceReportJsonSchema, createStructuredOutputToolParameters, ACCEPTANCE_REPORT_REQUIRED_ENV, STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV, STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, validateStructuredOutputValue } from "./structured-output.ts";
 import {
 	CHILD_TOOL_DIAGNOSTIC_PATH_ENV,
 	formatChildToolDiagnostic,
@@ -730,9 +730,46 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 	const structuredOutputPath = process.env[STRUCTURED_OUTPUT_CAPTURE_ENV];
 	const structuredAcceptanceReportPath = process.env[STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV];
 	const structuredSchemaPath = process.env[STRUCTURED_OUTPUT_SCHEMA_ENV];
-	if (structuredOutputPath && structuredSchemaPath) {
+	const acceptanceReportRequired = process.env[ACCEPTANCE_REPORT_REQUIRED_ENV] === "1" && Boolean(structuredAcceptanceReportPath);
+	const reportJsonSchema = acceptanceReportRequired ? acceptanceReportJsonSchema() : undefined;
+	const reportOnly = !structuredOutputPath && !structuredSchemaPath && acceptanceReportRequired;
+	if (reportOnly) {
+		// Standalone report delivery: no outputSchema, only the acceptance report.
+		// The tool's `value` IS the report; valid submission terminates the step.
+		const registerTool = pi.registerTool as unknown as (tool: {
+			name: string;
+			label: string;
+			description: string;
+			parameters: unknown;
+			execute: (_id: string, params: { value: unknown }) => Promise<unknown>;
+		}) => void;
+		registerTool({
+			name: "structured_output",
+			label: "Structured Output",
+			description: "Submit the required acceptance report for this subagent step. This terminates the step.",
+			parameters: {
+				type: "object",
+				properties: { value: reportJsonSchema },
+				required: ["value"],
+				additionalProperties: false,
+			},
+			async execute(_id: string, params: { value: unknown }) {
+				const validation = await validateStructuredOutputValue(reportJsonSchema!, params.value);
+				if (validation.status === "invalid") {
+					throw new Error(`Acceptance report validation failed: ${validation.message}`);
+				}
+				fs.mkdirSync(path.dirname(structuredAcceptanceReportPath!), { recursive: true });
+				fs.writeFileSync(structuredAcceptanceReportPath!, JSON.stringify(params.value), { mode: 0o600 });
+				return {
+					content: [{ type: "text", text: "Acceptance report captured." }],
+					details: { path: structuredAcceptanceReportPath },
+					terminate: true,
+				};
+			},
+		});
+	} else if (structuredOutputPath && structuredSchemaPath) {
 		const schema = JSON.parse(fs.readFileSync(structuredSchemaPath, "utf-8")) as JsonSchemaObject;
-		const parameters = createStructuredOutputToolParameters(schema, { acceptanceReport: Boolean(structuredAcceptanceReportPath) });
+		const parameters = createStructuredOutputToolParameters(schema, { acceptanceReport: Boolean(structuredAcceptanceReportPath), acceptanceReportSchema: reportJsonSchema });
 		const registerTool = pi.registerTool as unknown as (tool: {
 			name: string;
 			label: string;
@@ -750,9 +787,18 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 				if (validation.status === "invalid") {
 					throw new Error(`Structured output validation failed: ${validation.message}`);
 				}
+				if (acceptanceReportRequired && params.acceptanceReport === undefined) {
+					throw new Error("Acceptance report required: include an `acceptanceReport` object matching the acceptance contract in this structured_output call.");
+				}
 				fs.mkdirSync(path.dirname(structuredOutputPath), { recursive: true });
 				fs.writeFileSync(structuredOutputPath, JSON.stringify(params.value), { mode: 0o600 });
 				if (structuredAcceptanceReportPath && params.acceptanceReport !== undefined) {
+					if (reportJsonSchema) {
+						const reportValidation = await validateStructuredOutputValue(reportJsonSchema, params.acceptanceReport);
+						if (reportValidation.status === "invalid") {
+							throw new Error(`Acceptance report validation failed: ${reportValidation.message}`);
+						}
+					}
 					fs.writeFileSync(structuredAcceptanceReportPath, JSON.stringify(params.acceptanceReport), { mode: 0o600 });
 				}
 				return {

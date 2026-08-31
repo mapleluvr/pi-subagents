@@ -50,7 +50,7 @@ import { acquireActiveAsyncCapacity, ActiveAsyncCapacityError, getActiveAsyncCap
 import { isScheduledRunAction } from "../background/scheduled-runs.ts";
 import { enqueueChainAppendRequest, readPendingChainAppendRequests, runnerStepOutputNames } from "../background/chain-append.ts";
 import { ChainOutputValidationError, validateChainOutputBindingsWithContext } from "../shared/chain-outputs.ts";
-import { normalizeGateAcceptance, validateExecutionAcceptance } from "../shared/acceptance.ts";
+import { normalizeGateAcceptance, resolveAcceptanceReportMode, validateExecutionAcceptance } from "../shared/acceptance.ts";
 import { canPreferFork, createForkContextResolver, forkedChildRequiresThinkingOff, resolveSubagentLaunchContext } from "../../shared/fork-context.ts";
 import { createPrunedForkSessionWriter } from "../../shared/pruned-fork.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
@@ -3689,9 +3689,12 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		if (worktreeSetup) cleanupWorktrees(worktreeSetup);
 		return { content: [{ type: "text", text: validationError }], isError: true, details: { mode: "single", results: [] } };
 	}
+	const acceptanceReportOn = resolveAcceptanceReportMode(params.acceptance) === "structured";
 	const structuredRuntime = params.outputSchema
-		? createStructuredOutputRuntime(params.outputSchema, artifactConfig.enabled ? path.join(artifactsDir, "structured-output", runId) : undefined, { captureAcceptanceReport: params.acceptance !== false })
-		: undefined;
+		? createStructuredOutputRuntime(params.outputSchema, artifactConfig.enabled ? path.join(artifactsDir, "structured-output", runId) : undefined, { captureAcceptanceReport: params.acceptance !== false, acceptanceReportRequired: acceptanceReportOn })
+		: acceptanceReportOn
+			? createStructuredOutputRuntime(undefined, artifactConfig.enabled ? path.join(artifactsDir, "structured-output", runId) : undefined, { captureAcceptanceReport: true, acceptanceReportRequired: true })
+			: undefined;
 	// Reads: caller override > agent defaultReads > none. `~`/`~/` expand to home;
 	// absolute paths pass through; relative paths resolve against the child cwd.
 	const reads = readsOverride !== undefined ? readsOverride : agentConfig.defaultReads ?? false;
